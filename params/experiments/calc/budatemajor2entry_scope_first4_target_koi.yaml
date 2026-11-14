@@ -1,0 +1,39 @@
+# Single-entry analogue of gender2entry_scope_first4_target_female.yaml
+# (see that file's own header for the full field-by-field rationale) --
+# same question, but LEVEL1/target is budatemajor (部立大分類) pinned to
+# 恋 instead of gender pinned to F: measure each entry's (語's) divergence
+# against the 恋-labeled line slice as context, over all 6 budatemajor
+# categories' pooled population.
+#
+# SOURCE's own first4 (前4部作品) restriction already lives inside
+# entry_by_budatemajor_scope_first4.yaml itself (its own "filter" step,
+# scope_keys: [kokin, gosen, shuui, goshuui]) -- SCOPE here is the 6
+# budatemajor buckets (春/夏/秋/冬/恋/その他) produced by that file's own
+# "or" step, not a set of anthology names.
+#
+# CONDITION2 pins LEVEL1 to 恋 -- target=恋部, same "target=single
+# category value, rest of SCOPE provides the denominator" convention as
+# gender2entry_scope_first4_target_female.yaml's CONDITION2 (target=F).
+#
+# aux mirrors gender2entry_scope_first4_target_female.yaml's own pair
+# exactly, swapping the target axis's dispersion source: measured_
+# dispersion is still entry_by_line_scope_first4.yaml (the 語's own
+# first4-scoped dispersion, axis-independent), target_dispersion is
+# budatemajor_by_line_scope_first4.yaml (same non-degenerate full-first4-
+# scope construction already used as gender2budateentrypair_first4.yaml's
+# own category_dispersion aux, 2026-10-13-corrected).
+
+- source: ../data/entry_by_budatemajor_scope_first4.yaml
+  structure:
+    level1: 部立大分類
+    level2: 語
+    value: {match, population}
+  scope: [[春, 夏, 秋, 冬, 恋, その他]]
+  condition1: {field: level2}
+  condition2: {field: level1, value: [恋]}
+  direction: [forward, backward]
+  frequency_type: [doc, term]
+  kld_variant: [nofreq, obs]
+  aux:
+    measured_dispersion: ../data/dispersion/entry_by_line_scope_first4.yaml
+    target_dispersion: ../data/dispersion/budatemajor_by_line_scope_first4.yaml

@@ -7,7 +7,7 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         rEnv = pkgs.rWrapper.override {
-          packages = with pkgs.rPackages; [ shiny ggrepel data_table igraph jsonlite httpuv shinylive ];
+          packages = with pkgs.rPackages; [ shiny ggrepel data_table igraph jsonlite httpuv shinylive yaml ];
         };
         fonts = [ pkgs.noto-fonts-cjk-serif pkgs.noto-fonts-cjk-sans ];
       in {

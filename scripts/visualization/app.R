@@ -34,16 +34,7 @@
 #   nix develop . -c Rscript -e 'shiny::runApp("scripts/visualization/app.R", port = 2718)'
 
 library(shiny)
-
-# Chromium blocks service-worker downloads when the anchor has a download
-# attribute. Shiny supplies the filename in Content-Disposition already.
-if (exists(".base_url", envir = .GlobalEnv, inherits = FALSE)) {
-  downloadButton <- function(...) {
-    tag <- shiny::downloadButton(...)
-    tag$attribs$download <- NULL
-    tag
-  }
-}
+library(yaml)
 
 # shiny::runApp() on a single .R file setwd()s to that file's own
 # directory before sourcing it (confirmed 2026-10-14 -- the earlier
@@ -58,24 +49,9 @@ APP_DIR <- getwd()
 ROOT_DIR <- normalizePath(file.path(APP_DIR, "..", ".."))
 
 source(file.path(APP_DIR, "plot_point_vs_target.R"))
-options(kld.plot.font_family = Sys.getenv("KLD_PLOT_FONT", "Noto Serif CJK JP"))
-# Explicit imports also let Shinylive discover compiled package dependencies.
-if (FALSE) {
-  library(ggrepel)
-  library(data.table)
-  library(igraph)
-  library(jsonlite)
-}
 
 VIS_DIR <- file.path(ROOT_DIR, "data", "processed", "visualization")
 REF_DIR <- file.path(ROOT_DIR, "data", "reference")
-.MANIFEST_PATH <- file.path(VIS_DIR, "manifest.json")
-.DATA_MANIFEST <- if (file.exists(.MANIFEST_PATH)) jsonlite::read_json(.MANIFEST_PATH) else list()
-.table_header <- function(path) {
-  meta <- .DATA_MANIFEST[[basename(path)]]
-  if (!is.null(meta)) return(unlist(meta$columns, use.names = FALSE))
-  strsplit(readLines(path, n = 1, warn = FALSE), "\t")[[1]]
-}
 
 # renderImage() needs a real file at src -- before the first render
 # (or after a failed one) there's no PNG yet, so output$preview falls
@@ -201,7 +177,7 @@ REF_DIR <- file.path(ROOT_DIR, "data", "reference")
   updateCheckboxInput(session, "aggregate_locators", value = .bool("aggregate_locators", TRUE))
 
   for (id in c("edge_threshold", "dispersion_threshold", "node_dispersion_threshold",
-               "frequency_threshold", "node_frequency_threshold", "node_keyness_threshold")) {
+               "frequency_threshold", "node_frequency_threshold")) {
     .sync_filter(id)
   }
   frontier_n <- .num("frontier_n")
@@ -209,27 +185,13 @@ REF_DIR <- file.path(ROOT_DIR, "data", "reference")
   updateCheckboxInput(session, "annotate_nontarget_only", value = .bool("annotate_nontarget_only"))
   updateTextInput(session, "annotate_point_exclude", value = .get("annotate_point_exclude") %||% "")
   updateCheckboxInput(session, "highlight_frontier", value = .bool("highlight_frontier"))
-  unselected_alpha <- .num("unselected_alpha")
-  updateNumericInput(session, "unselected_alpha",
-                      value = if (is.na(unselected_alpha)) 0.05 else unselected_alpha)
 
   .select_file("annotate_words_file", "annotate_words_file")
   .select_file("highlight_file", "highlight_file")
   .select_file("highlight_pairs_file", "highlight_pairs_file")
   .select_file("annotate_pairs_file", "annotate_pairs_file")
 
-  # inset<N>_*キー(複数inset設定)が1つでもあれば、明示的なinset=trueが
-  # 無くてもinsetモード自体はON扱い——plot_point_vs_target.R側の実際の
-  # 描画ロジック(.draw_point_vs_target_args: inset = ...||!is.null(
-  # inset_configs))と同じ判定基準に揃える(2026-11-07修正: 以前はここが
-  # .bool("inset")だけを見ていたため、inset1_...等だけ貼り付けた5-inset
-  # コマンドでは「拡大表示」チェックボックス自体がFALSEのままになり、
-  # それを親に持つconditionalPanel一式[inset_n、各inset wellPanel含む]が
-  # 丸ごと非表示になっていた——UIが無反応に見えたのはここが原因で、
-  # webR固有の問題ではなかった)。
-  inset_idx_strs <- unique(sub("^inset([0-9]+)_.*$", "\\1", grep("^inset[0-9]+_", names(kv), value = TRUE)))
-  inset_idx <- as.integer(inset_idx_strs)
-  updateCheckboxInput(session, "inset", value = .bool("inset") || length(inset_idx) > 0)
+  updateCheckboxInput(session, "inset", value = .bool("inset"))
   if (!is.null(.get("inset_position"))) {
     updateSelectInput(session, "inset_position", selected = .get("inset_position"))
   }
@@ -242,6 +204,8 @@ REF_DIR <- file.path(ROOT_DIR, "data", "reference")
   # きた下標の最大値をinset_n に設定、各行のウィジェットを埋める。
   # 1個も無ければinset_nを1に戻す(貼り付けたコマンドがlegacy単inset
   # 形式だった場合、以前の複数inset入力が中途半端に残らないように)。
+  inset_idx_strs <- unique(sub("^inset([0-9]+)_.*$", "\\1", grep("^inset[0-9]+_", names(kv), value = TRUE)))
+  inset_idx <- as.integer(inset_idx_strs)
   if (length(inset_idx) > 0) {
     updateNumericInput(session, "inset_n", value = max(inset_idx))
     for (i in inset_idx) {
@@ -250,8 +214,7 @@ REF_DIR <- file.path(ROOT_DIR, "data", "reference")
       if (!is.null(pos)) updateSelectInput(session, .id("inset_position"), selected = pos)
       fn <- .num(.id("frontier_n"))
       if (!is.na(fn)) updateNumericInput(session, .id("frontier_n"), value = fn)
-      for (type in c("edge", "dispersion", "node_dispersion", "frequency", "node_frequency",
-                     "node_keyness")) {
+      for (type in c("edge", "dispersion", "node_dispersion", "frequency", "node_frequency")) {
         tid <- .id(paste0(type, "_threshold"))
         v <- .num(tid)
         if (!is.na(v)) {
@@ -277,22 +240,57 @@ REF_DIR <- file.path(ROOT_DIR, "data", "reference")
 # this project's calc yamls actually use into the English labels
 # already used throughout this session's own test renders -- not a
 # fresh naming choice, just making that existing convention automatic.
-# Display metadata exported independently of calculation configs.
-.DATASET_LABELS <- list(
-  "entry-vs-anthology-shinkokin.tsv" = list(point_label = "entry", axis_label = "anthology", value_label = "shinkokin"),
-  "entry-vs-gender-first4.tsv" = list(point_label = "entry", axis_label = "gender", value_label = "F"),
-  "entry-vs-gender-kokin.tsv" = list(point_label = "entry", axis_label = "gender", value_label = "F"),
-  "entry-vs-budatemajor-koi-first4.tsv" = list(point_label = "entry", axis_label = "budatemajor", value_label = "恋"),
-  "budatemajor-vs-gender-first4.tsv" = list(point_label = "budatemajor", axis_label = "gender", value_label = "F"),
-  "concept-mostnarrow-vs-gender-first4.tsv" = list(point_label = "concept", axis_label = "gender", value_label = "F"),
-  "concept-mostnarrow-vs-anthology-shinkokin.tsv" = list(point_label = "concept", axis_label = "anthology", value_label = "shinkokin"),
-  "pair-entry-entry-vs-anthology-shinkokin.tsv" = list(point_label = "entry", axis_label = "anthology", value_label = "shinkokin"),
-  "pair-entry-entry-vs-gender-first4.tsv" = list(point_label = "entry", axis_label = "gender", value_label = "F"),
-  "pair-entry-budatemajor-vs-gender-first4.tsv" = list(point_label = "budatemajor", axis_label = "gender", value_label = "F")
+.JA_FIELD_LABEL <- c("語" = "entry", "和歌集" = "anthology", "性別" = "gender",
+                     "部立大分類" = "budatemajor", "概念" = "concept")
+
+# visprepare.py's own CLI invocation (long_table=/structure_level2=/
+# target_value=/output=) is what actually ties a calc yaml to a
+# visualization tsv, but that invocation is run by hand and leaves no
+# trace in any committed file -- this map IS that missing record.
+# New dataset -> add one line here, same as adding one line to
+# VIS_DIR itself.
+.DATASET_CALC_YAML <- c(
+  "entry-vs-anthology-shinkokin.tsv" =
+    "params/experiments/calc/anthology2entry_target_shinkokin.yaml",
+  "entry-vs-gender-first4.tsv" =
+    "params/experiments/calc/gender2entry_scope_first4_target_female.yaml",
+  "entry-vs-gender-kokin.tsv" =
+    "params/experiments/calc/gender2entry_scope_kokin_target_female.yaml",
+  "pair-entry-entry-vs-anthology-shinkokin.tsv" =
+    "params/experiments/calc/anthology2entrypair_target_shinkokin.yaml",
+  "pair-entry-entry-vs-gender-first4.tsv" =
+    "params/experiments/calc/gender2entrypair_first4.yaml",
+  "pair-entry-budatemajor-vs-gender-first4.tsv" =
+    "params/experiments/calc/gender2budateentrypair_first4.yaml",
+  "entry-vs-budatemajor-koi-first4.tsv" =
+    "params/experiments/calc/budatemajor2entry_scope_first4_target_koi.yaml",
+  "concept-mostnarrow-vs-gender-first4.tsv" =
+    "params/experiments/calc/mostnarrowconcept2gender_scope_first4_target_female.yaml",
+  "concept-mostnarrow-vs-anthology-shinkokin.tsv" =
+    "params/experiments/calc/mostnarrowconcept2anthology_target_shinkokin.yaml"
 )
 
+# INPUT_FILE -> {point_label, axis_label, value_label}, read straight
+# off the originating calc yaml (structure.level2 -> point_label,
+# structure.level1 -> axis_label, condition2.value[1] -> value_label).
+# Falls back to the raw Japanese field name when .JA_FIELD_LABEL has no
+# entry for it (a future dataset this table hasn't caught up with yet)
+# rather than erroring, and returns NULL entirely when INPUT_FILE isn't
+# in .DATASET_CALC_YAML at all (caller keeps whatever labels are
+# already in the text inputs).
 .infer_labels <- function(input_file, root_dir = ROOT_DIR) {
-  .DATASET_LABELS[[input_file]]
+  yaml_path <- .DATASET_CALC_YAML[[input_file]]
+  if (is.null(yaml_path)) return(NULL)
+  full_path <- file.path(root_dir, yaml_path)
+  if (!file.exists(full_path)) return(NULL)
+  entry <- yaml::read_yaml(full_path)[[1]]
+  level2 <- sub("\\+.*$", "", entry$structure$level2)
+  level1 <- entry$structure$level1
+  list(
+    point_label = if (level2 %in% names(.JA_FIELD_LABEL)) .JA_FIELD_LABEL[[level2]] else level2,
+    axis_label = if (level1 %in% names(.JA_FIELD_LABEL)) .JA_FIELD_LABEL[[level1]] else level1,
+    value_label = as.character(entry$condition2$value[[1]])
+  )
 }
 
 .DEFAULT_INPUT_FILE <- "entry-vs-anthology-shinkokin.tsv"
@@ -307,8 +305,10 @@ if (is.null(.INITIAL_LABELS)) {
 # would just error if picked.
 .plottable_tables <- function(dir) {
   files <- list.files(dir, pattern = "\\.tsv$", full.names = FALSE)
-  files <- union(names(.DATA_MANIFEST), files)
-  Filter(function(f) "point" %in% .table_header(file.path(dir, f)), files)
+  Filter(function(f) {
+    header <- readLines(file.path(dir, f), n = 1, warn = FALSE)
+    startsWith(header, "point\t")
+  }, files)
 }
 
 # An un-enriched pair table (has "w1" but not "freq1" -- never ran
@@ -324,12 +324,12 @@ if (is.null(.INITIAL_LABELS)) {
 # labels at all, silently -- not a crash. Flagged here so the user
 # doesn't mistake "no labels" for "nothing matched."
 .is_unenriched_pair <- function(path) {
-  header <- .table_header(path)
+  header <- strsplit(readLines(path, n = 1, warn = FALSE), "\t")[[1]]
   "w1" %in% header && !("freq1" %in% header)
 }
 
 .pair_header_fields <- function(path) {
-  .table_header(path)
+  strsplit(readLines(path, n = 1, warn = FALSE), "\t")[[1]]
 }
 
 # field1/field2 (when present at all -- a 2026-09-23 addition, see
@@ -342,8 +342,6 @@ if (is.null(.INITIAL_LABELS)) {
 # too, not "unknown."
 .is_entry_entry_pair <- function(path, header) {
   if (!all(c("field1", "field2") %in% header)) return(TRUE)
-  meta <- .DATA_MANIFEST[[basename(path)]]
-  if (!is.null(meta)) return(identical(meta$field1, "entry") && identical(meta$field2, "entry"))
   row <- read.table(path, sep = "\t", header = TRUE, nrows = 1,
                      stringsAsFactors = FALSE, quote = "", fileEncoding = "UTF-8")
   identical(row$field1[1], "entry") && identical(row$field2[1], "entry")
@@ -448,8 +446,7 @@ if (is.null(.INITIAL_LABELS)) {
 # 定数から生成——顶层(以下のALL_PARAM_KEYS)と複数inset設定の各行
 # (.INSET_CONFIG_SUBKEYS)で同じ命名規則を共有し、どちらかだけ直しても
 # 片方が追従し忘れることを防ぐ。
-.THRESHOLD_TYPES <- c("edge", "dispersion", "node_dispersion", "frequency", "node_frequency",
-                      "node_keyness")
+.THRESHOLD_TYPES <- c("edge", "dispersion", "node_dispersion", "frequency", "node_frequency")
 .threshold_key_pairs <- function() {
   as.vector(rbind(paste0(.THRESHOLD_TYPES, "_threshold"), paste0(.THRESHOLD_TYPES, "_threshold_op")))
 }
@@ -466,8 +463,7 @@ if (is.null(.INITIAL_LABELS)) {
 ALL_PARAM_KEYS <- c(
   "kld_variant", "frequency_type", "point_label", "axis_label", "value_label", "badge_selection",
   "aggregate_locators", .threshold_key_pairs(), "frontier_n", "annotate_nontarget_only",
-  "annotate_point_exclude", "highlight_frontier", "unselected_alpha",
-  "annotate_words_file", "highlight_file",
+  "annotate_point_exclude", "highlight_frontier", "annotate_words_file", "highlight_file",
   "highlight_pairs_file", "annotate_pairs_file",
   "inset", "inset_position", "inset_pad_frac",
   "zoom_annotated_only", "repel_annotated_only",
@@ -598,14 +594,6 @@ ui <- fluidPage(
       .filter_control("frequency_threshold", "frequency_threshold (total_freq)"),
       .filter_control("node_frequency_threshold", "node_frequency_threshold (pair片側freq1/freq2)",
                       pair_only = TRUE),
-      # draft.org:1211-1212「それぞれの語の女性歌への連関が0.8以下のものに
-      # 限定する」(2026-11-07) -- pair片側(w1/w2)それぞれの単語単位keyness
-      # の絶対値をみるfilter。node_dispersion/node_frequencyと同じ「pair
-      # 片側」系列だが、値そのものが符号付きKLDなので内部ではabs()を取って
-      # から比較する(plot_point_vs_target.R側の.SELECTION_FILTER_ABS)。
-      .filter_control("node_keyness_threshold",
-                      "node_keyness_threshold (pair片側語自身のKLD、絶対値)",
-                      pair_only = TRUE),
       conditionalPanel(
         condition = "input.badge_selection == 'frontier'",
         numericInput("frontier_n", "frontier_n (badge_selection=\"frontier\"時)", value = 15,
@@ -616,15 +604,6 @@ ui <- fluidPage(
                     "highlight_frontier (frequencyがfrontier中点より大きい点を染色、badge_selectionと独立)",
                     value = FALSE),
       .cmd_toggle("highlight_frontier"),
-      # highlight/highlight_pairs/highlight_frontierのいずれかで「選ばれた
-      # 点」がある時だけ、選ばれなかった点をこの値まで薄くする(2026-11-07、
-      # 元は0.2固定、同日中にユーザーが「flagにしてUIでも調整できるように」
-      # と変更)。選ぶ側の概念が1つも無ければ無視される(plot_point_vs_
-      # target.R側のhas_categories判定、ここでは再現しない)。
-      numericInput("unselected_alpha",
-                   "unselected_alpha (highlight/highlight_frontier選択時、非選択点の透明度)",
-                   value = 0.05, min = 0, max = 1, step = 0.05),
-      .cmd_toggle("unselected_alpha"),
       conditionalPanel(
         condition = "input.badge_selection == 'words' && input.annotate_words_file != '(none)'",
         checkboxInput("annotate_nontarget_only",
@@ -704,8 +683,7 @@ ui <- fluidPage(
                 .inset_config_filter_control(sprintf("inset%d_dispersion_threshold", i), "dispersion_threshold"),
                 .inset_config_filter_control(sprintf("inset%d_node_dispersion_threshold", i), "node_dispersion_threshold"),
                 .inset_config_filter_control(sprintf("inset%d_frequency_threshold", i), "frequency_threshold"),
-                .inset_config_filter_control(sprintf("inset%d_node_frequency_threshold", i), "node_frequency_threshold"),
-                .inset_config_filter_control(sprintf("inset%d_node_keyness_threshold", i), "node_keyness_threshold")
+                .inset_config_filter_control(sprintf("inset%d_node_frequency_threshold", i), "node_frequency_threshold")
               )
             )
           })
@@ -765,9 +743,11 @@ server <- function(input, output, session) {
     path <- file.path(VIS_DIR, input$input_file)
     if (.is_unenriched_pair(path)) {
       tags$p(style = "color: darkorange;",
-             "このデータにはラベル表示に必要な列が不足しています。",
+             "このファイルはまだbuild_pair_enriched_table.Rを通していません -- ",
              "エラーにはなりませんが、badge(ラベル)が1つも出ません",
-             "必要な列を含むデータを選んでください。")
+             "(assoc_w1_to_w2/assoc_w2_to_w1列が無いため、内部のdedup処理が",
+             "全行を黙って除外します)。先にbuild_pair_enriched_table.Rで",
+             "enrichしたファイルを選んでください。")
     }
   })
 
@@ -874,8 +854,6 @@ server <- function(input, output, session) {
     frequency_threshold_op <- .resolve_threshold_op_input(input, "frequency_threshold")
     node_frequency_threshold <- .resolve_threshold(input, "node_frequency_threshold")
     node_frequency_threshold_op <- .resolve_threshold_op_input(input, "node_frequency_threshold")
-    node_keyness_threshold <- .resolve_threshold(input, "node_keyness_threshold")
-    node_keyness_threshold_op <- .resolve_threshold_op_input(input, "node_keyness_threshold")
     # inset個数が2以上の時だけ、複数inset設定(各行のinset_position/
     # frontier_n/5种filter)を組み立てる——1個の時はこれまで通り、
     # 上のフィルタ欄(edge_threshold等)+inset_position(単一値)で
@@ -889,10 +867,10 @@ server <- function(input, output, session) {
           inset_position = input[[.id("inset_position")]],
           frontier_n = input[[.id("frontier_n")]],
           filters = setNames(lapply(c("edge", "dispersion", "node_dispersion",
-                                       "frequency", "node_frequency", "node_keyness"), function(type) {
+                                       "frequency", "node_frequency"), function(type) {
             tid <- .id(paste0(type, "_threshold"))
             list(value = .resolve_threshold(input, tid), op = .resolve_threshold_op_input(input, tid))
-          }), c("edge", "dispersion", "node_dispersion", "frequency", "node_frequency", "node_keyness"))
+          }), c("edge", "dispersion", "node_dispersion", "frequency", "node_frequency"))
         )
       })
     } else NULL
@@ -917,13 +895,10 @@ server <- function(input, output, session) {
       frequency_threshold = frequency_threshold, frequency_threshold_op = frequency_threshold_op,
       node_frequency_threshold = node_frequency_threshold,
       node_frequency_threshold_op = node_frequency_threshold_op,
-      node_keyness_threshold = node_keyness_threshold,
-      node_keyness_threshold_op = node_keyness_threshold_op,
       frontier_n = input$frontier_n,
       annotate_nontarget_only = input$annotate_nontarget_only,
       annotate_point_exclude = annotate_point_exclude,
       highlight_frontier = input$highlight_frontier,
-      unselected_alpha = input$unselected_alpha,
       annotate_words_file = annotate_words_file,
       highlight_file = highlight_file,
       highlight_pairs_file = highlight_pairs_file,
@@ -972,13 +947,10 @@ server <- function(input, output, session) {
       frequency_threshold = frequency_threshold, frequency_threshold_op = frequency_threshold_op,
       node_frequency_threshold = node_frequency_threshold,
       node_frequency_threshold_op = node_frequency_threshold_op,
-      node_keyness_threshold = node_keyness_threshold,
-      node_keyness_threshold_op = node_keyness_threshold_op,
       frontier_n = input$frontier_n,
       annotate_nontarget_only = input$annotate_nontarget_only,
       annotate_point_exclude = annotate_point_exclude,
       highlight_frontier = input$highlight_frontier,
-      unselected_alpha = input$unselected_alpha,
       annotate_words_file = .rel_ref(input$annotate_words_file),
       highlight_file = .rel_ref(input$highlight_file),
       highlight_pairs_file = .rel_ref(input$highlight_pairs_file),

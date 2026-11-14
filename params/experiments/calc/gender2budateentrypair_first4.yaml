@@ -1,0 +1,66 @@
+# Meta-config entry for budateentrypair_by_gender_scope_first4.yaml --
+# same schema as gender2entrypair_first4.yaml (see that file's own
+# header for the full field-by-field rationale shared with
+# anthology2entrypair_target_shinkokin.yaml). Differs from
+# gender2entrypair_first4.yaml only in what LEVEL2 actually is:
+# budatemajor+entry (category×entry, x1 non-lexical) instead of
+# entry+entry (語対, both halves lexical) -- see budateentrypair_by_
+# gender_scope_first4.yaml's own header for why x1 needs no cartesian
+# pair-match formula the way two entries do.
+#
+# CONDITION1 (no value) ranges over every budatemajor+entry pair -- one
+# CrossTable per pair. CONDITION2 pins LEVEL1 to F, same "target为female"
+# rule as gender2entrypair_first4.yaml (confirmed with the user,
+# 2026-10-07), M/U providing the "other" half of SCOPE's own denominator.
+# SCOPE includes U alongside F/M for the same reason (person/@gender is
+# always exactly one of F/M/U, confirmed 2026-10-12).
+
+- source: ../data/budateentrypair_by_gender_scope_first4.yaml
+  structure:
+    level1: 性別
+    level2: 部立大分類+語
+    value: {match, population}
+  scope: [[F, M, U]]
+  condition1: {field: level2}
+  condition2: {field: level1, value: [F]}
+  direction: []
+  # measured_value (level2) is a budatemajor+entry pair -- dispersion off
+  # the matching first4-scoped budateentrypair_by_line_scope_first4.yaml
+  # index (category-pair-keyed, not single-entry, GENDER axis collapsed
+  # away same as entrypair_by_line_scope_first4.yaml collapses ANTHOLOGY/
+  # GENDER), plus the pair's own category association off entry_by_
+  # budatemajor_scope_first4.yaml's own 3-level budatemajor×entry
+  # crosstable index, same first4 scope -- BOTH readings (category_
+  # forward/category_backward, see kldcalculation.build_compute's own
+  # AUX_CATEGORY_INDEX comment), via pair_cross_table_matrix/_transposed
+  # on ONE table (x1=budatemajor is never a valid level2 value in that
+  # index, so this isn't two swapped queries the way entry×entry pairs'
+  # pair_forward_x1/x2 is -- confirmed against dh-book-draft's own real
+  # pair-entry-topic-association-kokin.tsv, which already has both
+  # directions for exactly this non-lexical-x1 situation, 2026-10-13).
+  # category_dispersion is budatemajor's (x1's) OWN dispersion, off
+  # budatemajor_by_line_scope_first4.yaml's own 2-level Level2Index --
+  # NOT degenerate (corrected 2026-10-13: an earlier conclusion that
+  # gender/anthology/budatemajor dispersion is a guaranteed-constant 0
+  # came from building match/population FROM a category's own already-
+  # restricted bucket alone; this source instead spans the full first4
+  # scope as its own line universe, giving real, distinct-per-category
+  # numbers -- see pair_statistics.category_dispersion_match_population's
+  # own docstring). target_value is gender (level1) -- still not wired
+  # here (no gender_by_line_scope_first4.yaml built yet for it), NOT
+  # because it's degenerate -- that old "gender dispersion is guaranteed
+  # 0" rule this comment used to cite is itself the wrong conclusion just
+  # corrected; revisit once that data yaml exists.
+  # measured_dispersion_target/_reference (2026-10-18): the pair-level
+  # D_T - D_R split (dispersion_difference), gender-scoped sibling of
+  # gender2entrypair_first4.yaml's own target/reference aux pair --
+  # see budateentrypair_by_line_scope_gender_female.yaml/_not_female.
+  # yaml's own headers for why this needs pair_statistics.category_
+  # entry_count_target/_reference (gender doesn't partition lines
+  # disjointly the way anthology does) instead of a plain filter.
+  aux:
+    measured_dispersion: ../data/dispersion/budateentrypair_by_line_scope_first4.yaml
+    category_association: ../data/entry_by_budatemajor_scope_first4.yaml
+    category_dispersion: ../data/dispersion/budatemajor_by_line_scope_first4.yaml
+    measured_dispersion_target: ../data/dispersion/budateentrypair_by_line_scope_gender_female.yaml
+    measured_dispersion_reference: ../data/dispersion/budateentrypair_by_line_scope_gender_not_female.yaml

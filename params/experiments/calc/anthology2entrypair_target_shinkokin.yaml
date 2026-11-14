@@ -1,0 +1,113 @@
+# Meta-config block for the indexop/indexation/registry/
+# kldcalculation pipeline -- read by registry.py (via
+# registry.expand_params_file), not a placeholder: registry.py
+# expands this entry's own open condition1 into a cache/registry/
+# *.yaml list of fully-pinned entries, which kldcalculation.run_entry
+# then runs.
+#
+# SOURCE points at the self-contained experiment yaml (under
+# ../data/) that actually produces this entry's output --
+# indexation.run_experiment runs THAT file (via registry.load_index),
+# this block only describes/selects which one and how to read its
+# result, it never duplicates that file's own indexgen/indexcalc
+# content (same "don't scatter one experiment's definition across
+# files" rule the data yamls themselves follow -- this is a layer
+# above a complete file, not a fragment of one).
+#
+# STRUCTURE names SOURCE's own output levels in plain terms, so a
+# reader doesn't have to open the json to know its shape: LEVEL1 is
+# the outer key (和歌集 -- anthology, kokin/gosen/.../shinkokin),
+# LEVEL2 is the middle key (語対 -- the entry×entry pair, x1+x2
+# combined), VALUE is what sits at the innermost key (l, the line's
+# own xml:id) -- {match, population} (see pair_statistics.py).
+#
+# This schema differs from the OLD kld_nofreq system's own meta-config
+# array ({anthology, target_condition, condition1, condition2}, see
+# scripts/kld-nofreq/src/kld_nofreq/generate_experiment_vector.py's
+# parse_meta_config/MetaConfigEntry; old instance at the repo root's
+# params/experiment-params.yaml). That system needed a domain field
+# name (entry/gender/topic/...) written into each condition, because
+# it resolved every condition's poem set dynamically via SPARQL at
+# query time. This pipeline doesn't need that: SOURCE's own output
+# already has a fixed structure (STRUCTURE.level1/level2) baked in at
+# generation time, and that structure already carries the domain
+# semantics (STRUCTURE's own labels say what level1/level2 mean). So
+# a condition here only needs to say WHICH LEVEL it pins, not what
+# that level is called in the domain -- hence condition.field takes
+# level1/level2, not entry/gender/topic/...
+#
+# SCOPE replaces the old ANTHOLOGY field's name -- not every future
+# SOURCE's own top-level grouping dimension is necessarily an
+# anthology, so this is the generic name for "the full set of values
+# the outer grouping dimension ranges over."
+#
+# CONDITION1/CONDITION2 together describe a pair of levels being
+# compared; each is {field: level1|level2, value: [...]} (value
+# optional -- a condition with no value ranges over everything at
+# that level, e.g. "every 語対" below).
+#
+# DIRECTION replaces the old TARGET_CONDITION field. The old field's
+# job was marking which condition is the target/context slice;
+# CONDITION2's own VALUE (when given) already pins a concrete slice,
+# which does that job on its own. What's still missing without a
+# separate field is which condition is the MEASURED side and which is
+# the TARGET/CONTEXT side -- an asymmetric relationship, not a slice.
+# DIRECTION (forward|backward) states that: forward means condition1
+# is measured against condition2-as-context, backward is the reverse.
+# This mirrors the asymmetry scripts/kld-nofreq/src/kld_nofreq/
+# cross_table.py's _term_both docstring already documents for Gries
+# association -- "verb-to-construction" and "construction-to-verb" are
+# two different numbers computed from the same table.
+#
+# FREQUENCY_TYPE (doc|term, added 2026-10-11) picks which of two
+# readings of PairIndex's own real match/population counts each line
+# contributes to the crosstable -- "term" sums raw token-level counts
+# (the only behavior before this field existed); "doc" binarizes each
+# line first (match -> 1 if nonzero else 0, population -> always 1),
+# a document/poem-presence reading instead. Same crosstable formulas,
+# same KLD math either way -- see kldcalc.cross_table._leaf_counts.
+#
+# KLD_VARIANT (obs|nofreq, added 2026-10-11) picks which of
+# kld_and_nofreq's own two readings COMPUTE returns -- same real,
+# named COMPUTE parameter treatment as DIRECTION/FREQUENCY_TYPE (see
+# kldcalc.kld.kld_variant), not a post-hoc filter over an always-both
+# result: still only one kld_and_nofreq() call either way (nofreq's
+# own derivation already needs "obs" as an input), just named and
+# selected explicitly instead of a caller discarding half a 2-tuple.
+#
+# DIRECTION/FREQUENCY_TYPE/KLD_VARIANT all left as a 2-element list
+# here means "compute every combination" (the registry.py/arrayparse
+# expansion machinery cross-products every open field the same way it
+# already does for CONDITION1's own open VALUE) -- a 1-element list
+# pins that field to just the one value instead.
+#
+# With this schema, the only things a reader hand-writes per entry are
+# SOURCE (which experiment yaml) and which level/value each condition
+# pins -- that pair of facts is enough to tell what the entry actually
+# computes.
+
+- source: ../data/entrypair_by_anthology_scope_all.yaml
+  structure:
+    level1: 和歌集
+    level2: 語+語
+    value: {match, population}
+  scope: [[kokin, gosen, shuui, goshuui, kinyo, shika, senzai, shinkokin]]
+  condition1: {field: level2}
+  condition2: {field: level1, value: [shinkokin]}
+  direction: [forward, backward]
+  frequency_type: [doc, term]
+  kld_variant: [nofreq, obs]
+  # measured_value (level2) is a 語対 pair -- dispersion off the
+  # matching all8-scoped entrypair_by_line_scope_all.yaml index, plus
+  # the pair's own internal association (both forward readings) off
+  # entry_by_entry_scope_all.yaml's own entry×entry crosstable index,
+  # same all8 scope. target_value is anthology (level1) --
+  # target_dispersion off anthology_by_line_scope_all.yaml, same
+  # correction as anthology2entry_target_shinkokin.yaml's own aux
+  # comment (not degenerate once computed over the full all8 scope).
+  aux:
+    measured_dispersion: ../data/dispersion/entrypair_by_line_scope_all.yaml
+    pair_association: ../data/entry_by_entry_scope_all.yaml
+    target_dispersion: ../data/dispersion/anthology_by_line_scope_all.yaml
+    measured_dispersion_target: ../data/dispersion/entrypair_by_line_scope_shinkokin.yaml
+    measured_dispersion_reference: ../data/dispersion/entrypair_by_line_scope_not_shinkokin.yaml

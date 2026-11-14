@@ -71,6 +71,14 @@
     "field2": {},
     "source_md5": "5d053c643fe79810c33a6db38df84712"
   },
+  "pair-entry-budatemajor-vs-gender-first4-word-kld-lt0.6.tsv": {
+    "asset": "pair-entry-budatemajor-vs-gender-first4-word-kld-lt0.6.rds",
+    "rows": 59344,
+    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "w1", "w2", "field1", "field2", "freq1", "freq2", "dispersion1", "dispersion2", "keyness1", "keyness2", "assoc_w1_to_w2", "assoc_w2_to_w1"],
+    "field1": "部立大分類",
+    "field2": "語",
+    "source_md5": "6375d927f2286e4cb21c4ffaf45325e9"
+  },
   "pair-entry-budatemajor-vs-gender-first4.tsv": {
     "asset": "pair-entry-budatemajor-vs-gender-first4.rds",
     "rows": 58176,
@@ -86,6 +94,14 @@
     "field1": "語",
     "field2": "語",
     "source_md5": "264bbc8a11764b69babe4f40bc25221d"
+  },
+  "pair-entry-entry-vs-gender-first4-word-kld-lt0.6.tsv": {
+    "asset": "pair-entry-entry-vs-gender-first4-word-kld-lt0.6.rds",
+    "rows": 1332808,
+    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "w1", "w2", "field1", "field2", "freq1", "freq2", "dispersion1", "dispersion2", "assoc_w1_to_w2", "assoc_w2_to_w1"],
+    "field1": "語",
+    "field2": "語",
+    "source_md5": "43a700bee2556c54bba027be7f866773"
   },
   "pair-entry-entry-vs-gender-first4.tsv": {
     "asset": "pair-entry-entry-vs-gender-first4.rds",

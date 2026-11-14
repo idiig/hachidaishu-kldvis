@@ -1,0 +1,34 @@
+# Single-entry analogue of gender2entry_scope_first4_target_female.yaml
+# (see that file's own header for the full field-by-field rationale) --
+# same question (measure each LEVEL2's divergence against the female
+# slice as context, over the F/M/U population), but LEVEL2 here is a
+# concept (もっとも狭い分類語彙表番号、climbしない -- concept2l2entry_
+# exclusion.entry_mostnarrow_concepts参照) instead of a lexical entry
+# (語).
+#
+# SOURCE's own first4 restriction already lives inside mostnarrowconcept_
+# by_gender_scope_first4.yaml itself (its own "filter" step). SCOPE is
+# F/M/U, same as gender2entry_scope_first4_target_female.yaml's own
+# SCOPE (U included for the same reason, see that file's own header).
+#
+# aux mirrors gender2entry_scope_first4_target_female.yaml's own pair
+# exactly, swapping the LEVEL2 dispersion source for its concept
+# equivalent: measured_dispersion is mostnarrowconcept_by_line_scope_
+# first4.yaml (the concept's own first4-scoped dispersion, gender-
+# independent), target_dispersion stays gender_by_line_scope_first4.yaml
+# unchanged (LEVEL1/target is still gender here, not budatemajor).
+
+- source: ../data/mostnarrowconcept_by_gender_scope_first4.yaml
+  structure:
+    level1: 性別
+    level2: 概念
+    value: {match, population}
+  scope: [[F, M, U]]
+  condition1: {field: level2}
+  condition2: {field: level1, value: [F]}
+  direction: [forward, backward]
+  frequency_type: [doc, term]
+  kld_variant: [nofreq, obs]
+  aux:
+    measured_dispersion: ../data/dispersion/mostnarrowconcept_by_line_scope_first4.yaml
+    target_dispersion: ../data/dispersion/gender_by_line_scope_first4.yaml

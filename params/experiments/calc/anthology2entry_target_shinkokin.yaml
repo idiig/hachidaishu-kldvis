@@ -1,0 +1,57 @@
+# Single-entry analogue of anthology2entrypair_target_shinkokin.yaml --
+# same question (measure each value's divergence against shinkokin as
+# context, over the 8-anthology corpus), but LEVEL2 here is one entry
+# (語, a single lexical item) rather than an entry×entry pair (語対).
+# See that file's own header for the full field-by-field schema
+# (SOURCE/STRUCTURE/SCOPE/CONDITION1/CONDITION2/DIRECTION/
+# FREQUENCY_TYPE/KLD_VARIANT) -- unchanged here, only LEVEL2's own
+# domain meaning differs.
+#
+# SOURCE's own groupby already produces {anthology: {entry: {l:
+# items}}} (anthology2l2entry's own top-level key is the anthology, so
+# no x1 decompose/pairing is needed the way entry×entry needs -- see
+# entry_by_anthology_scope_all.yaml's own header). match/population for a
+# single entry need no C(n,2) pair combinatorics either: match(l) =
+# items.count(entry) and population(l) = len(items) (every entry's own
+# raw occurrence count at that line) -- indexop.count_op's own built-in
+# "match"/"population" calculators, not pair_statistics's pair-specific
+# ones. entry_by_anthology_scope_all.yaml now has match/population/
+# match_population (merge) steps added alongside its pre-existing
+# binary step (2026-10-11), mirroring entrypair_by_anthology_scope_all.
+# yaml's own match/population/match_population steps -- SOURCE's own
+# final deliverable (last output:true step) is match_population.
+
+- source: ../data/entry_by_anthology_scope_all.yaml
+  structure:
+    level1: 和歌集
+    level2: 語
+    value: {match, population}
+  scope: [[kokin, gosen, shuui, goshuui, kinyo, shika, senzai, shinkokin]]
+  condition1: {field: level2}
+  condition2: {field: level1, value: [shinkokin]}
+  direction: [forward, backward]
+  frequency_type: [doc, term]
+  kld_variant: [nofreq, obs]
+  # measured_value (level2) is a single entry -- gets its own dispersion
+  # off the matching all8-scoped entry_by_line_scope_all.yaml index.
+  # target_value is anthology (level1), not an entry -- target_dispersion
+  # off anthology_by_line_scope_all.yaml's own 2-level Level2Index
+  # (CORRECTED 2026-10-13: the earlier "gender/anthology dispersion is a
+  # guaranteed-constant 0" conclusion came from building match/population
+  # FROM a category's own already-restricted {l: items} bucket alone;
+  # anthology_by_line_scope_all.yaml instead spans the full all8 scope as
+  # its own line universe, giving a real, non-degenerate number -- see
+  # pair_statistics.category_dispersion_match_population's own docstring).
+  # No pair_association -- measured_value is never a 語対 in this calc
+  # yaml.
+  # measured_dispersion_target/_reference (2026-10-15): the same
+  # entry, each restricted to one side's own lines -- shinkokin alone
+  # (T) vs the other 7 anthologies (R) -- powering visprepare.py's own
+  # dispersion_difference = D_T - D_R column (see kldcalculation.py's
+  # own aux comment for why these two stay raw KLD here, normalized/
+  # inverted/subtracted only in the patch).
+  aux:
+    measured_dispersion: ../data/dispersion/entry_by_line_scope_all.yaml
+    target_dispersion: ../data/dispersion/anthology_by_line_scope_all.yaml
+    measured_dispersion_target: ../data/dispersion/entry_by_line_scope_shinkokin.yaml
+    measured_dispersion_reference: ../data/dispersion/entry_by_line_scope_not_shinkokin.yaml

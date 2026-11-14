@@ -1,0 +1,50 @@
+# Single-entry analogue of gender2entrypair_first4.yaml -- same
+# question (measure each entry's divergence against the female slice
+# as context, over the F/M population), but LEVEL2 here is one entry
+# (語) rather than an entry×entry pair (語対). See
+# anthology2entrypair_target_shinkokin.yaml's own header for the full
+# field-by-field schema.
+#
+# SOURCE's own "前4部作品" (first four anthologies) restriction already
+# lives inside entry_by_gender_scope_first4.yaml itself (its own single
+# "filter" step) -- SCOPE here is both genders (F/M), not a set of
+# anthology names, same as gender2entrypair_first4.yaml's own SCOPE.
+# match/population need no C(n,2) pair combinatorics (single entry,
+# not a pair) -- indexop.count_op's own built-in "match"/"population"
+# calculators on the groupby result, added to entry_by_gender_scope_first4.yaml
+# alongside its pre-existing flatten step, 2026-10-12.
+#
+# CONDITION2 pins LEVEL1 to F -- target=female, same convention
+# gender2entrypair_first4.yaml's own header confirms (2026-10-07): each
+# entry's association is measured against the female slice, with M
+# providing the "other" half of SCOPE's own denominator.
+#
+# SCOPE includes U alongside F/M since 2026-10-12 -- same reasoning as
+# gender2entrypair_first4.yaml's own header (confirmed with the user):
+# U is the TEI's own literal person/@gender value (読人不知/gender-
+# unrecorded), not a derived category -- build_gender2entry_index
+# previously only looped over ("F", "M"), silently dropping it, and
+# leaving it out of SCOPE here would undercount population_total/
+# target_population by the same ~29%-of-first4-lines share that
+# motivated adding it there.
+
+- source: ../data/entry_by_gender_scope_first4.yaml
+  structure:
+    level1: 性別
+    level2: 語
+    value: {match, population}
+  scope: [[F, M, U]]
+  condition1: {field: level2}
+  condition2: {field: level1, value: [F]}
+  direction: [forward, backward]
+  frequency_type: [doc, term]
+  kld_variant: [nofreq, obs]
+  # measured_value (level2) is a single entry -- dispersion off the
+  # matching first4-scoped entry_by_line_scope_first4.yaml index.
+  # target_value is gender (level1) -- target_dispersion off gender_by_
+  # line_scope_first4.yaml's own 2-level Level2Index (CORRECTED
+  # 2026-10-13, same non-degenerate full-scope construction as
+  # anthology2entry_target_shinkokin.yaml's own aux comment).
+  aux:
+    measured_dispersion: ../data/dispersion/entry_by_line_scope_first4.yaml
+    target_dispersion: ../data/dispersion/gender_by_line_scope_first4.yaml

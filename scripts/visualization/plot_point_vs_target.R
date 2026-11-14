@@ -16,8 +16,8 @@
 # x/y轴含义(2026-11-05最终版): x=keyness(POINT measured against TARGET，
 # "POINT→TARGET"方向，word→corpus的signed KLD)，范围固定在[-1,1](配合
 # kld_variant=keyassoc这类理论本身就以±1为界的量，见.compute_axis_ranges，
-# 不随数据/筛选变化)。y=频度(调整后)——不是KLD，是node_size列本身
-# (log2(n_target)经表生成时max-min正规化过的值，之前一直是点大小的依据，
+# データやフィルタによらない。y=調整後の総頻度で、KLDではなくnode_size列
+# （log2(total_freq+1)を表全体の最大値で正規化した値）を用いる。
 # 见.size_scale旧注释)，非负，范围固定在[0,1]。点的大小不再对应频度，改用
 # 该点/pair自身的dispersion——相当于把"频度(调整后)"和"dispersion"原来
 # 各自的展示位置(y轴↔点大小)互换了一次(2026-11-05用户确认：只换纵轴，
@@ -58,7 +58,7 @@ library(ggrepel)
 # 现算(2026-11-05改，用户要求"轴的范围...不随node筛选调整")：
 #   - x(keyness，point→target signed KLD)钉在[-1,1]——kld_variant=keyassoc
 #     这类量理论上界就是±1。
-#   - y(频度/调整后，直接读node_size列——log2(n_target)正规化，不是KLD)
+#   - y（調整後の総頻度、node_size列——log2(total_freq+1)の正規化値、KLDではない）
 #     钉在[0,1]——这个量本来就非负、且表生成时已经按max归一化过，理论
 #     上界是[0,1]不是±1(2026-11-05用户纠正：一开始误把y轴理解成另一个
 #     方向的signed KLD、钉在[-1,1]，用户确认"0到1更合适")。
@@ -190,14 +190,15 @@ library(ggrepel)
 # 的候选)。容错大小写和">="/"<="/"ge"/"le"这几种常见写法，非法值直接
 # stop()——不能悄悄当默认"gte"处理，否则CLI/app.R传错了op会在数据上产生
 # 看不出来的静默错误。
-.THRESHOLD_OPS <- c(gte = ">=", lte = "<=")
+.THRESHOLD_OPS <- c(gte = ">=", lte = "<=", lt = "<")
 
 .resolve_threshold_op <- function(op) {
   if (is.null(op) || is.na(op)) return("gte")
   norm <- tolower(trimws(op))
-  norm <- switch(norm, ">=" = "gte", "<=" = "lte", "ge" = "gte", "le" = "lte", norm)
+  norm <- switch(norm, ">=" = "gte", "<=" = "lte", "<" = "lt",
+                 "ge" = "gte", "le" = "lte", norm)
   if (!norm %in% names(.THRESHOLD_OPS)) {
-    stop("threshold op must be one of gte/lte (or >=/<=/ge/le), got: ", op)
+    stop("threshold op must be one of gte/lte/lt (or >=/<=/<, ge/le), got: ", op)
   }
   norm
 }
@@ -221,7 +222,11 @@ library(ggrepel)
   Reduce(`&`, lapply(cols, function(c) {
     v <- d[[c]]
     if (use_abs) v <- abs(v)
-    if (identical(op, "gte")) !is.na(v) & v >= threshold else !is.na(v) & v <= threshold
+    if (identical(op, "gte")) !is.na(v) & v >= threshold else if (identical(op, "lte")) {
+      !is.na(v) & v <= threshold
+    } else {
+      !is.na(v) & v < threshold
+    }
   }))
 }
 
@@ -245,7 +250,8 @@ library(ggrepel)
   node_dispersion = c("dispersion1", "dispersion2"),
   frequency = "total_freq",
   node_frequency = c("freq1", "freq2"),
-  node_keyness = c("keyness1", "keyness2")
+  node_keyness = c("keyness1", "keyness2"),
+  node_signed_keyness = c("keyness1", "keyness2")
 )
 
 # どのfilterがabs(v)を取ってから比較するか——今のところnode_keynessだけ
@@ -262,14 +268,17 @@ library(ggrepel)
                                     node_dispersion = NULL, node_dispersion_op = "gte",
                                     frequency = NULL, frequency_op = "gte",
                                     node_frequency = NULL, node_frequency_op = "gte",
-                                    node_keyness = NULL, node_keyness_op = "gte") {
+                                    node_keyness = NULL, node_keyness_op = "gte",
+                                    node_signed_keyness = NULL,
+                                    node_signed_keyness_op = "gte") {
   list(
     edge = list(value = edge, op = edge_op),
     dispersion = list(value = dispersion, op = dispersion_op),
     node_dispersion = list(value = node_dispersion, op = node_dispersion_op),
     frequency = list(value = frequency, op = frequency_op),
     node_frequency = list(value = node_frequency, op = node_frequency_op),
-    node_keyness = list(value = node_keyness, op = node_keyness_op)
+    node_keyness = list(value = node_keyness, op = node_keyness_op),
+    node_signed_keyness = list(value = node_signed_keyness, op = node_signed_keyness_op)
   )
 }
 
@@ -282,8 +291,9 @@ library(ggrepel)
   for (key in names(.SELECTION_FILTER_COLS)) {
     f <- spec[[key]]
     if (is.null(f) || is.null(f$value)) next
+    use_abs <- key %in% names(.SELECTION_FILTER_ABS) && isTRUE(.SELECTION_FILTER_ABS[[key]])
     mask <- mask & .threshold_mask(d, .SELECTION_FILTER_COLS[[key]], f$value, f$op,
-                                    use_abs = isTRUE(.SELECTION_FILTER_ABS[[key]]))
+                                    use_abs = use_abs)
   }
   which(mask)
 }
@@ -293,8 +303,9 @@ library(ggrepel)
 # "(フィルタなし)"，不留空行。
 .FILTER_DESC_LABEL <- c(edge = "連関", dispersion = "分散度", node_dispersion = "語の分散度",
                          frequency = "頻度", node_frequency = "語の頻度",
-                         node_keyness = "語自身のKLD")
-.FILTER_DESC_OP_SYMBOL <- c(gte = "≥", lte = "≤")
+                         node_keyness = "語自身の|KLD|",
+                         node_signed_keyness = "語自身のKLD")
+.FILTER_DESC_OP_SYMBOL <- c(gte = "≥", lte = "≤", lt = "<")
 
 .inset_filter_desc <- function(spec) {
   parts <- character(0)
@@ -363,6 +374,12 @@ filter_by_node_keyness <- function(d, threshold, op = "gte") {
   .filter_by_columns(d, c("keyness1", "keyness2"), threshold, op, use_abs = TRUE)
 }
 
+# 図中の小さい文字(badge・mean/median・方向矢印の文字)をまとめて
+# 拡大する倍率(2026-11-14、draft-short.org用)。draw_point_vs_target()の
+# text_scale引数がoptionsに入れる。既定1=従来どおり。凡例は位置を
+# インチ固定で並べているため対象外(拡大すると文字同士が重なる)。
+.text_scale <- function() getOption("kld.plot.text_scale", 1)
+
 .draw_axes <- function(d, ranges, nofreq, axis_label, point_label, x_break = NULL, y_break = NULL,
                         axis_col = "black", kld_variant = NULL, label_lang = "ja") {
   xr <- ranges$xr; yr <- ranges$yr
@@ -409,16 +426,29 @@ filter_by_node_keyness <- function(d, threshold, op = "gte") {
     # 把x刻度数字除以10^x_exp、显示成科学计数法的逻辑(当时x轴是量级很小的
     # 原始frequency列)，轴改成固定范围后那段逻辑永远算出exponent=0，只会在
     # 标题后面多出一个没用的"(10^0)"，所以跟着这次轴改动一起删掉(2026-11-05)。
-    # x轴=keyness(point→target signed KLD)不变；y轴=频度(调整后)，2026-11-05
+    # x軸=keyness(point→target signed KLD)は不変、y軸=調整後の総頻度
     # 改回来——中间先后显示过dispersion、又短暂显示过另一个方向的signed KLD，
-    # 最终用户要的是频度本身的调整值(node_size列，log2(n_target)正规化，
+    # y軸には総頻度の調整値（node_size列、log2(total_freq+1)の正規化値、
     # 不是KLD)，所以y轴标题不再用KLD的plotmath格式，dispersion现在改到点的
     # 大小上(见draw_point_vs_target()里d$node_size的赋值)。
-    axis(1, at = pretty(xr), col = axis_col, col.axis = axis_col, col.ticks = axis_col)
-    axis(2, at = pretty(yr), col = axis_col, col.axis = axis_col, col.ticks = axis_col)
-    title(xlab = bquote(plain(KLD)[.(kld_sub)] * "(" * .(point_label) * "→" * .(axis_label) * ")"),
-          ylab = bquote(plain(.(.ui_label("frequency", label_lang))) * "(" * .(point_label) * ")"),
-          line = title_line)
+    # hide_*_ticks(2026-11-14)：坐标范围相同的格子并排时(图ex-7的short版)
+    # 那一侧的坐标轴(轴线・刻度线・刻度数字)整条不画
+    if (!isTRUE(getOption("kld.plot.hide_x_ticks", FALSE))) {
+      axis(1, at = pretty(xr), col = axis_col, col.axis = axis_col, col.ticks = axis_col)
+    }
+    if (!isTRUE(getOption("kld.plot.hide_y_ticks", FALSE))) {
+      axis(2, at = pretty(yr), col = axis_col, col.axis = axis_col, col.ticks = axis_col)
+    }
+    # 显式网格(draft-short.org)：非最下行不画x轴标题、非最左列不画y轴标题
+    # (刻度数字保留——各inset的坐标范围不同)。见.render_with_insets。
+    if (!isTRUE(getOption("kld.plot.hide_x_title", FALSE))) {
+      title(xlab = bquote(plain(KLD)[.(kld_sub)] * "(" * .(point_label) * "→" * .(axis_label) * ")"),
+            line = title_line)
+    }
+    if (!isTRUE(getOption("kld.plot.hide_y_title", FALSE))) {
+      title(ylab = bquote(plain(.(.ui_label("frequency", label_lang))) * "(" * .(point_label) * ")"),
+            line = title_line)
+    }
   }
   # neutral(理论中性点)如果落在被断轴压缩的那根轴上，要用同一个fwd()换算
   # 成压缩后的位置，不然虚线会画在跟数据脱节的地方
@@ -444,9 +474,9 @@ filter_by_node_keyness <- function(d, threshold, op = "gte") {
   # text out there would collide with them.
   abline(h = y_mean, col = "#888888", lty = 3)
   text(xr[2], y_median, labels = sprintf("median %.3f", y_median),
-       col = "#AAAAAA", cex = 0.55, adj = c(1, -0.3))
+       col = "#AAAAAA", cex = 0.55 * .text_scale(), adj = c(1, -0.3))
   text(xr[2], y_mean, labels = sprintf("mean %.3f", y_mean),
-       col = "#888888", cex = 0.55, adj = c(1, -0.3))
+       col = "#888888", cex = 0.55 * .text_scale(), adj = c(1, -0.3))
 }
 
 # 点の大きさは2026-11-05以降dispersion基準(draw_point_vs_target()の冒頭で
@@ -516,7 +546,7 @@ field_label_by_type <- function() c(entry = "語", concept = "概念", topic = "
 }
 
 # 类别配色候选色带，按highlight$type首次出现的顺序依次领取(默认/未命中
-# highlight的点固定用蓝色带，不占用这个轮换列表)
+# highlight的点用灰阶，不占用这个轮换列表)
 category_color_palettes <- function() list(
   c(light = "#F4B6AC", dark = "#7A0C00"),
   c(light = "#C9E9CE", dark = "#164A22"),
@@ -524,7 +554,11 @@ category_color_palettes <- function() list(
   c(light = "#FCE8B2", dark = "#8A5A00"),
   c(light = "#B8E2E8", dark = "#0D4F5C")
 )
-default_color_palette <- function() c(light = "#CBD9F0", dark = "#0B2C6B")
+# 未命中highlight的点本身早已改用灰阶渐变(gradient_color_palette，再按
+# unselected_alpha淡化)，这组颜色只剩.draw_legend里"默认桶"那个色块在用。
+# 之前是蓝色(#0B2C6B)，跟图里实际的灰色背景点对不上(2026-11-12用户反馈
+# "非highlight的点的legend是蓝色的，应该改成灰色")，改成中灰。
+default_color_palette <- function() c(light = "#E5E5E5", dark = "#9E9E9E")
 # highlight/highlight_pairs都没给(没有多个种类的点，只有一种)时，用这条
 # 黑灰渐变代替上面的蓝色——蓝色是"未命中highlight的默认桶"这个语义色，
 # 只有存在别的type需要跟它区分时才有意义；根本没有分类时继续用蓝色会
@@ -827,6 +861,13 @@ filter_to_annotated_points <- function(rows, badge_rows) {
     matched <- d[.pair_stem_key(d$w1, d$w2) %in% target_keys, ]
     return(.dedup_pair_rows(matched))
   }
+  if (identical(badge_selection, "points")) {
+    stopifnot(!is.null(annotate_words))
+    matched <- d[d$point %in% annotate_words, ]
+    hi <- matched[matched$keyness > neutral, ]
+    lo <- matched[matched$keyness <= neutral, ]
+    return(.dedup_pair_rows(rbind(hi, lo)))
+  }
   if (!is.null(annotate_words)) {
     point_stem <- sub("【.*$", "", d$point)
     matched <- d[point_stem %in% annotate_words, ]
@@ -949,6 +990,106 @@ filter_to_annotated_points <- function(rows, badge_rows) {
 # 整段svg拼进主图后会变成一块挡住背后连线/散点的白板(用户反馈"网络图会
 # 遮挡其他的线条，希望保持透视")，声明透明背景后graphviz就不画这块背景
 # 了，嵌套svg元素本身默认也是透明的，背后的内容能透出来。
+.render_pair_network_svg <- function(members, fontsize = 11, network_scale = 0.01, network_node_gap = 1,
+                                       filter_edge_count = 500, top_pct = 0.01) {
+  if (nrow(members) > filter_edge_count) {
+    strength <- pmax(abs(members$assoc_w1_to_w2), abs(members$assoc_w2_to_w1))
+    thresh <- quantile(strength, 1 - top_pct)
+    members <- members[strength >= thresh, ]
+  }
+  # concept侧节点标签也可能带BG编号(见.concept_display_text)，网络图节点/
+  # badge是同一批文字的另一种呈现方式，同样不需要展示内部分类代码
+  field1 <- if (!is.null(members$field1)) members$field1 else NA_character_
+  field2 <- if (!is.null(members$field2)) members$field2 else NA_character_
+  members$w1 <- .concept_display_text(members$w1, field1)
+  members$w2 <- .concept_display_text(members$w2, field2)
+  nodes <- unique(c(members$w1, members$w2))
+  esc <- function(s) gsub('"', '\\\\"', s, fixed = TRUE)
+  max_abs <- max(abs(members$assoc_w1_to_w2), abs(members$assoc_w2_to_w1))
+  lw <- function(v) sprintf("%.2f", pmax(0.8, pmin(4, abs(v) / max_abs * 4)))
+  # 主导(红)/附属(黑)配色逐条边独立判断，同一node可能横跨多条边、身份不一
+  # 致——数值更大方向指向的来源算附属，跟这个文件其它地方(原.draw_pair_glyph)
+  # 同一个判断规则，只是这里对每条边分别判断；node边框颜色取"只要在任一条
+  # 边里当过主导就标红，否则标黑"(2026-09-21确认的效果，见preview_network2)。
+  node_col <- setNames(rep("#111111", length(nodes)), nodes)
+  edge_decls <- character(0)
+  for (i in seq_len(nrow(members))) {
+    w1 <- members$w1[i]; w2 <- members$w2[i]
+    v12 <- members$assoc_w1_to_w2[i]; v21 <- members$assoc_w2_to_w1[i]
+    col1 <- if (v12 > v21) "#111111" else "#CC2200"
+    col2 <- if (v12 > v21) "#CC2200" else "#111111"
+    if (col1 == "#CC2200") node_col[[w1]] <- "#CC2200"
+    if (col2 == "#CC2200") node_col[[w2]] <- "#CC2200"
+    edge_decls <- c(edge_decls,
+      sprintf('  "%s" -> "%s" [color="%s", penwidth=%s];', esc(w1), esc(w2), col1, lw(v12)),
+      sprintf('  "%s" -> "%s" [color="%s", penwidth=%s];', esc(w2), esc(w1), col2, lw(v21)))
+  }
+  # node形状按该node自己的field(entry/concept/topic)区分——只在合并了
+  # 多种pair(entry-entry/entry-concept/entry-topic)的图里才会出现混合
+  # 类型的node，靠文字不容易看出谁是entry谁是concept/topic(2026-09-23
+  # "topic和concept的node可以使用不同的形状")。field1/field2缺失(老
+  # 数据/单一pair类型、没跑过.rbind_fill补NA)时全部退回ellipse，跟这次
+  # 改动之前完全一样。一个node理论上在不同行里的field应该恒定(entry的
+  # 字符串不会同时出现在concept/topic的候选集里)，这里只是没有特地校验
+  # 是否一致，取先出现的一次。
+  node_field <- setNames(rep(NA_character_, length(nodes)), nodes)
+  if (!is.null(members$field1)) {
+    for (i in seq_len(nrow(members))) {
+      if (is.na(node_field[[members$w1[i]]])) node_field[[members$w1[i]]] <- members$field1[i]
+      if (is.na(node_field[[members$w2[i]]])) node_field[[members$w2[i]]] <- members$field2[i]
+    }
+  }
+  node_shape <- vapply(node_field[nodes], function(f) {
+    if (is.na(f)) return("ellipse")
+    switch(f, entry = "ellipse", concept = "box", topic = "diamond", "ellipse")
+  }, character(1))
+  node_decls <- sprintf('  "%s" [color="%s", shape=%s];', esc(nodes), node_col[nodes], node_shape)
+  # 2026-09-21用户指出"新增的flag应该调节节点之间的紧凑程度，目前的scale
+  # 最后只影响了节点内部的留白"——实测验证过这个诊断是对的：overlap=false
+  # 模式下，sep(节点间最小间距)/len(边的理想长度)这两个理论上该控制"节点
+  # 之间距离"的参数，实际对最终画布大小几乎没有作用(sep从3降到0.3、
+  # 画布只从680x191变成623x206，len从0.3降到0.03完全没变化)，真正让画布
+  # 缩小的其实是margin(节点内部留白，从0.06/0.03降到0.006/0.003能到
+  # 591x191)——也就是说overlap=false这个去重叠算法只在"局部微调节点位置
+  # 避免相撞"，不会把整个布局往中心压缩，sep再小也没用武之地。
+  # 换成overlap=scale(布局算完、保证不重叠之后，整体等比缩小到刚好不
+  # 重叠为止)之后，sep才变成真正有效的连续旋钮(sep=0时284x139，sep=30时
+  # 570x159，单调变化)，且len在scale模式下完全不起作用(不用再传)——
+  # 实测确认overlap=scale不会让节点互相压住(node自身的rx/ry在两种overlap
+  # 模式下完全一样，只是相对位置被压紧了，见2026-09-21会话记录)，比
+  # overlap=vpsc/compress更安全(那两种在实测里出现了节点边框互相压住、
+  # 文字读不出来的情况)。
+  # 所以现在两个独立的旋钮：network_node_gap直接控制sep(节点之间的紧凑
+  # 程度，这是用户这次要的)，network_scale只控制margin(节点内部留白，
+  # 上一轮反馈"效果不明显"但至少不会带来副作用，保留)。
+  margin_w <- 0.06 * network_scale; margin_h <- 0.03 * network_scale
+  dot_src <- c("digraph g {",
+               "  layout=neato;", "  overlap=scale;",
+               sprintf('  sep="+%g";', network_node_gap), "  bgcolor=transparent;",
+               # width/height给一个很小的下限(0.15/0.1英寸)，不然graphviz
+               # 默认最小节点尺寸是0.75x0.5英寸(不管文字多短都不会更小)——
+               # 短label(比如单字)会让graphviz的自然画布远比实际需要的大，
+               # 这两个不跟着network_scale缩放(已经很小，再缩容易让短label
+               # 的椭圆包不住文字)。
+               sprintf('  node [shape=ellipse, style=filled, fillcolor=white, fontname="Hiragino Mincho ProN", fontsize=%d, penwidth=1.6, width=0.15, height=0.1, margin="%g,%g"];',
+                       fontsize, margin_w, margin_h),
+               '  edge [fontname="Hiragino Mincho ProN"];',
+               "  splines=curved;",
+               node_decls, edge_decls, "}")
+  svg_lines <- system2("neato", args = "-Tsvg", input = dot_src, stdout = TRUE)
+  status <- attr(svg_lines, "status")
+  if (!is.null(status) && status != 0) {
+    stop("neato -Tsvg failed (需要pkgs.graphviz在PATH里，见flake.nix)")
+  }
+  paste(svg_lines, collapse = "\n")
+}
+
+.parse_svg_dims_pt <- function(svg_txt) {
+  header <- regmatches(svg_txt, regexpr('width="[0-9.]+pt" height="[0-9.]+pt"', svg_txt))
+  nums <- as.numeric(regmatches(header, gregexpr("[0-9.]+", header))[[1]])
+  list(w = nums[1], h = nums[2])
+}
+
 # 每个badge的两行(计数框+词，或计数框+名单列表)合并成一个整体框，一起
 # 参与排版；内部上下堆叠的相对位置不变——只是这个整体框会被摆到某个最终
 # 位置。2026-09-22改回：pair的badge不再画graphviz网络图(node+edge小图)，
@@ -968,7 +1109,7 @@ filter_to_annotated_points <- function(rows, badge_rows) {
 # BG编号是内部分类代码，2026-09-22用户要求"badge里去掉bg id的显示"；
 # 2026-09-23进一步要求"光看label不知道这个概念里有什么词，加3个例词"。
 # 例词数据来自SPARQL(entry->concept的成员关系)，R这边没有直接查询能力，
-# 靠scripts/analysis/build_concept_display_labels.py离线生成的小查找表
+# 靠reproduction/pair_feature_list_reproduce.org的build-shinkokin-concept-display-labels块离线生成的小查找表
 # (原始复合key -> "label（例词1・例词2・例词3）"这样的完整展示文本)。
 # 长表自己的condition1_label/condition2_label列也带这份展示文本，但只
 # 覆盖"concept单独出现"的行——pair行的pair Element本身从来不生成自己的
@@ -1131,13 +1272,10 @@ filter_to_annotated_points <- function(rows, badge_rows) {
       }
       line_w_in <- vapply(shown, strwidth, numeric(1), cex = badge_cex, family = fam, units = "inches")
       line_h_in <- vapply(shown, strheight, numeric(1), cex = badge_cex, family = fam, units = "inches")
-      # 名单多行堆叠时行间距单独放大到label_gap_in的1.8倍(2026-11-05，
-      # 用户反馈"annotation的字太紧了")——label_gap_in本身还要继续给
-      # box-to-list的间距、badge跟badge之间的排版间距用，不能直接改它的
-      # 定义，只在这里(以及.draw_badge_box里实际画字的同一处公式)单独放大，
-      # 两边用同一个倍数才能保证算出来的框高度跟实际画的字真的对得上
-      # (combined_h_in要是比实际渲染矮，排版算法会以为这块区域更小，
-      # 画出来会跟别的badge/点重叠)。
+      # 行间距用label_gap_in*1.8而不是label_gap_in本身——半个字高的行距
+      # 实测偏挤(多词名单的行与行几乎贴在一起)，跟visualization-repo独立
+      # 修过的同一个问题(commit af788bd)保持一致，两处行距公式(这里和
+      # .draw_badge_box里的逐行步进)要一起改、不能只改一边。
       line_gap_in <- label_gap_in * 1.8
       return(list(kind = "word_list", word_list = shown, count_label = count_label,
                    box_w_in = box_w_in, box_h_in = box_h_in,
@@ -1243,7 +1381,11 @@ filter_to_annotated_points <- function(rows, badge_rows) {
   # 之后才画，找空白矩形时不知道那块地方"看起来空"其实已经被图例占了)，
   # 保守地把这块也标记成占用，不然badge可能会被排进去、跟图例文字叠在一起
   # (2026-09-14用4区块方案实测后发现的重叠)
-  legend_w_in <- 0.75; legend_h_in <- 2.2
+  # text_scale>1(2026-11-14)：badgeが大きくなり空白が減るため、凡例の長い
+  # 種別名(例「部立×語→女性歌KLD上位10」、約1.4in)の上にまでbadgeが
+  # 置かれるようになった——予約幅を凡例の実寸まで広げる。既定1では従来どおり。
+  legend_w_in <- if (.text_scale() > 1) 1.45 else 0.75
+  legend_h_in <- if (.text_scale() > 1) 2.5 else 2.2
   lx1 <- max(1, ceiling((pin[1] - legend_w_in) / cell_w))
   ly2 <- max(1, ceiling(legend_h_in / cell_h))
   occupied[1:min(res, ly2), lx1:res] <- TRUE
@@ -1260,6 +1402,10 @@ filter_to_annotated_points <- function(rows, badge_rows) {
     # 额外处理
     x1 <- max(region[1], min(px_in[i] - w / 2, region[3] - w))
     y1 <- max(region[2], min(py_in[i] - h / 2, region[4] - h))
+    # 区域比badge小时上面的clamp会让badge伸出绘图区(2026-11-14、text_scale
+    # 放大后在3×2网格里伸进相邻格/画布外)——最后再收进绘图区本身
+    x1 <- max(0, min(x1, pin[1] - w))
+    y1 <- max(0, min(y1, pin[2] - h))
     x1v[i] <- x1
     y1v[i] <- y1
 
@@ -1355,8 +1501,7 @@ filter_to_annotated_points <- function(rows, badge_rows) {
   # Confirmed with the user 2026-10-15.
   word_text_col <- "#111111"
   if (identical(g$kind, "word_list")) {
-    # line_gap_in跟.badge_geometry()算combined_h_in时用的倍数(1.8)保持
-    # 一致，否则这里实际画出来的高度会跟排版阶段预留的框高度对不上
+    # label_gap_in*1.8，跟.badge_geometry()里combined_h_in的公式保持同步
     line_gap_in <- label_gap_in * 1.8
     y_in <- count_bot_in - label_gap_in
     for (line in g$word_list) {
@@ -1376,7 +1521,8 @@ filter_to_annotated_points <- function(rows, badge_rows) {
 .draw_badges <- function(rows, fill, border, text_col, word_col, badge_layout,
                           d_all, value_label, not_value_label, badge_cex, fam,
                           label_gap_in, x_per_in, y_per_in, data_to_in_x, data_to_in_y,
-                          in_to_data_x, in_to_data_y, pin, neutral, max_group_members = 50) {
+                          in_to_data_x, in_to_data_y, pin, neutral, max_group_members = 50,
+                          tie_boxes = list()) {
   n <- nrow(rows)
   if (n == 0) return(invisible(NULL))
   if (length(fill) == 1) fill <- rep(fill, n)
@@ -1421,10 +1567,28 @@ filter_to_annotated_points <- function(rows, badge_rows) {
                      fill[i], border[i], text_col[i], word_col[i], badge_cex, fam,
                      label_gap_in, x_per_in, y_per_in, in_to_data_x, in_to_data_y)
   }
-  # 连线起点就是点自身的位置(2026-11-05起——同值点的外接框功能已删除，
-  # 之前这里会把起点clamp到框的边上，见git历史)。
+  # ROWSの各点がtie_boxes(.compute_x_tie_boxesの出力、{key: {x1,y1,x2,
+  # y2}})のどれかに属していれば、連結線の出発点はその点自身ではなく箱の
+  # 辺にする(2026-10-17、ユーザー確認済み：「線がもし框なら、框のedgeから
+  # 出発。もし点なら、そのまま」)。出発点を「箱の中でbadge自身の位置に
+  # 一番近い点」にクランプするだけで済む -- badgeは普通箱の外にあるので、
+  # x/yそれぞれ独立に[box_x1,box_x2]/[box_y1,box_y2]へクランプした結果は
+  # そのまま箱の辺(角を含む)に乗る、標準的な「矩形上の最近点」の求め方。
   start_x_in <- px_in
   start_y_in <- py_in
+  if (length(tie_boxes) > 0) {
+    keys <- paste(rows$n_target, rows$n_not_target, sep = "/")
+    for (i in seq_len(n)) {
+      box <- tie_boxes[[keys[i]]]
+      if (is.null(box)) next
+      box_x_in <- data_to_in_x(c(box$x1, box$x2))
+      box_y_in <- data_to_in_y(c(box$y1, box$y2))
+      badge_cx_in <- resolved$x1[i] + combined_w[i] / 2
+      badge_cy_in <- resolved$y1[i] + combined_h[i] / 2
+      start_x_in[i] <- min(max(badge_cx_in, min(box_x_in)), max(box_x_in))
+      start_y_in[i] <- min(max(badge_cy_in, min(box_y_in)), max(box_y_in))
+    }
+  }
   for (i in seq_len(n)) {
     # 连线颜色用word_col(不透明版本)而不是rows$point_col(默认蓝点带
     # alpha=0.35半透明)——连线也是画在空白画布上(道理跟word_col本身的
@@ -1474,13 +1638,27 @@ filter_to_annotated_points <- function(rows, badge_rows) {
   marks_in
 }
 
-# pending(.draw_badges()收集的待拼接清单，每条含graphviz的svg_txt+目标
-# inches区域)拼接进已经写盘的主svg文件——graphviz的svg内容整段当成一个
-# 嵌套<svg x y width height viewBox>元素插入主文件(SVG标准支持svg嵌套，
-# 嵌套元素会按自己的viewBox自动缩放去填满给定的width/height，不需要手算
-# transform矩阵)，取自己的<g ...>到</svg>之间的内容、丢掉graphviz自己的
-# <?xml?>/<!DOCTYPE>/外层<svg>标签。marks_in是.draw_svg_calibration_marks()
-# 画标记时用的同一组inches坐标，用来反解仿射变换。
+# PENDING/MARKS_IN现在都是"按网络面板分组"的list(2026-11-07起)——
+# PENDING[[i]]是第i个退化成网络面板的panel自己的待拼接清单(.draw_badges()
+# 收集，每条含graphviz的svg_txt+目标inches区域)，MARKS_IN[[i]]是那同一个
+# panel自己的.draw_svg_calibration_marks()标记坐标(一对inches坐标)。
+# 之所以要按面板分组、不能像旧版那样全局共用一份标记：每个inset panel
+# 在画布上的par(fig=...)子区域位置不同，同一组局部inches坐标(比如panel
+# 自己(0.15,0.15)这个角)对应到最终svg像素坐标的仿射变换(尤其OFFSET，
+# SCALE理论上各panel一致都是72/-72)其实是不同的——用哪个panel的标记反解
+# 出的变换，就只对那个panel自己的pending内容准(2026-11-07实测验证：
+# 之前"多个网络面板直接stop()"的那条限制，根源就是全局只反解一份变换、
+# 拿去套用在所有面板的pending上，对除最后一个面板外的其它面板位置全错，
+# 不是网络面板本身不能共存)。每组各自反解自己的SCALE/OFFSET、各自拼接
+# 自己的blocks，最后把所有组的blocks一次性插入主svg——校准标记的个数
+# 因此是2*length(pending)(每组2个)，不再是固定2个。单面板场景下
+# length(pending)==1，这就退化回跟改动前完全一样的单组计算，不产生任何
+# 像素级差异。
+# 每个嵌套svg元素的拼法不变：graphviz整段svg内容当成一个嵌套<svg x y
+# width height viewBox>元素插入主文件(SVG标准支持svg嵌套，嵌套元素会按
+# 自己的viewBox自动缩放去填满给定的width/height，不需要手算transform
+# 矩阵)，取自己的<g ...>到</svg>之间的内容、丢掉graphviz自己的<?xml?>/
+# <!DOCTYPE>/外层<svg>标签。
 .splice_network_glyphs <- function(output, pending, marks_in) {
   if (length(pending) == 0) return(invisible(NULL))
   if (!grepl("\\.svg$", output, ignore.case = TRUE)) {
@@ -1490,42 +1668,48 @@ filter_to_annotated_points <- function(rows, badge_rows) {
   svg_txt <- paste(readLines(output, encoding = "UTF-8", warn = FALSE), collapse = "\n")
   lines_all <- strsplit(svg_txt, "\n")[[1]]
   mark_lines <- grep("0.392157%, 0.784314%, 1.176471%", lines_all, fixed = TRUE, value = TRUE)
-  if (length(mark_lines) != 2) {
-    stop("找不到svg校准标记(应该有2个)，网络badge拼接失败——可能是svg输出格式变了")
+  expected_marks <- 2 * length(pending)
+  if (length(mark_lines) != expected_marks) {
+    stop(sprintf("找不到svg校准标记(应该有%d个，每个网络面板自己2个)，网络badge拼接失败——可能是svg输出格式变了",
+                 expected_marks))
   }
   get_center <- function(line) {
     d_str <- sub('.*d="([^"]*)".*', "\\1", line)
     nums <- as.numeric(regmatches(d_str, gregexpr("[0-9]+\\.?[0-9]*", d_str))[[1]])
     c(mean(nums[c(1, 3)]), mean(nums[c(2, 6)]))
   }
-  raw1 <- get_center(mark_lines[1]); raw2 <- get_center(mark_lines[2])
-  in1 <- marks_in[[1]]; in2 <- marks_in[[2]]
-  scale_x <- (raw2[1] - raw1[1]) / (in2[1] - in1[1])
-  scale_y <- (raw2[2] - raw1[2]) / (in2[2] - in1[2])
-  if (abs(scale_x - 72) > 0.5 || abs(scale_y + 72) > 0.5) {
-    stop(sprintf("svg校准标记反解出的scale(%.3f, %.3f)偏离预期的(72, -72)太多，网络badge拼接的坐标换算前提不成立，需要重新核对",
-                 scale_x, scale_y))
-  }
-  offset_x <- raw1[1] - scale_x * in1[1]
-  offset_y <- raw1[2] - scale_y * in1[2]
-  affine_x <- function(ix) scale_x * ix + offset_x
-  affine_y <- function(iy) scale_y * iy + offset_y
-
   lines_all <- lines_all[!grepl("0.392157%, 0.784314%, 1.176471%", lines_all, fixed = TRUE)]
 
-  blocks <- vapply(pending, function(p) {
-    x1_raw <- affine_x(p$x1_in)
-    y_top_raw <- affine_y(p$y1_in + p$h_in)
-    w_raw <- p$w_in * 72
-    h_raw <- p$h_in * 72
-    inner <- sub("^.*?(<g )", "\\1", p$svg_txt)
-    inner <- sub("</svg>\\s*$", "", inner)
-    sprintf('<svg x="%f" y="%f" width="%f" height="%f" viewBox="0 0 %f %f">\n%s\n</svg>',
-            x1_raw, y_top_raw, w_raw, h_raw, p$gv_w_pt, p$gv_h_pt, inner)
-  }, character(1))
+  all_blocks <- character(0)
+  for (i in seq_along(pending)) {
+    raw1 <- get_center(mark_lines[2 * i - 1]); raw2 <- get_center(mark_lines[2 * i])
+    in1 <- marks_in[[i]][[1]]; in2 <- marks_in[[i]][[2]]
+    scale_x <- (raw2[1] - raw1[1]) / (in2[1] - in1[1])
+    scale_y <- (raw2[2] - raw1[2]) / (in2[2] - in1[2])
+    if (abs(scale_x - 72) > 0.5 || abs(scale_y + 72) > 0.5) {
+      stop(sprintf("面板%d的svg校准标记反解出的scale(%.3f, %.3f)偏离预期的(72, -72)太多，网络badge拼接的坐标换算前提不成立，需要重新核对",
+                   i, scale_x, scale_y))
+    }
+    offset_x <- raw1[1] - scale_x * in1[1]
+    offset_y <- raw1[2] - scale_y * in1[2]
+    affine_x <- function(ix) scale_x * ix + offset_x
+    affine_y <- function(iy) scale_y * iy + offset_y
+
+    blocks <- vapply(pending[[i]], function(p) {
+      x1_raw <- affine_x(p$x1_in)
+      y_top_raw <- affine_y(p$y1_in + p$h_in)
+      w_raw <- p$w_in * 72
+      h_raw <- p$h_in * 72
+      inner <- sub("^.*?(<g )", "\\1", p$svg_txt)
+      inner <- sub("</svg>\\s*$", "", inner)
+      sprintf('<svg x="%f" y="%f" width="%f" height="%f" viewBox="0 0 %f %f">\n%s\n</svg>',
+              x1_raw, y_top_raw, w_raw, h_raw, p$gv_w_pt, p$gv_h_pt, inner)
+    }, character(1))
+    all_blocks <- c(all_blocks, blocks)
+  }
 
   svg_txt <- paste(lines_all, collapse = "\n")
-  svg_txt <- sub("</svg>\\s*$", paste0(paste(blocks, collapse = "\n"), "\n</svg>\n"), svg_txt)
+  svg_txt <- sub("</svg>\\s*$", paste0(paste(all_blocks, collapse = "\n"), "\n</svg>\n"), svg_txt)
   writeLines(svg_txt, output, useBytes = TRUE)
   invisible(NULL)
 }
@@ -1541,9 +1725,9 @@ filter_to_annotated_points <- function(rows, badge_rows) {
 # 措辞的那两个，见.draw_axis_direction_arrows自己的注释)或
 # FILTER_DESC_LABEL(inset框上方的filter说明文字，没人要求联动)。
 .UI_LABELS <- list(
-  ja = c(frequency = "頻度", dispersion = "分散度", dispersion_range = "分散度差",
+  ja = c(frequency = "総頻度", dispersion = "分散度", dispersion_range = "分散度差",
          frontier = "対象"),
-  en = c(frequency = "frequency", dispersion = "dispersion", dispersion_range = "dispersion range",
+  en = c(frequency = "total frequency", dispersion = "dispersion", dispersion_range = "dispersion range",
          frontier = "target")
 )
 .ui_label <- function(key, label_lang = "ja") {
@@ -1641,7 +1825,7 @@ filter_to_annotated_points <- function(rows, badge_rows) {
 # 和画出来的点大小直接读同一个值——不再像以前(标n_target、按大小画
 # node_size)那样是两个不同列，所以只需要一个参数。凡例是代表值3个
 # (最小/中央值/最大)，中央值在偶数个时是2个中间值的平均，实データのどの
-# 行の値とも一致しないことがある -- 「一番近い実際の行」を探してその行
+# 行の値とも一致しない ことがある -- 「一番近い実際の行」を探してその行
 # 自身の値を読む(2026-10-17確認済みの「表生成時に1回だけ計算、Rで再計算
 # しない」という原則は変わらず、dispersion自体もtsv生成時に書き込まれた
 # 列のまま)。
@@ -1732,7 +1916,7 @@ filter_to_annotated_points <- function(rows, badge_rows) {
 # X axis keeps value_label/not_value_label (point->target signed KLD, a
 # genuinely bipolar "F" vs "not F" quantity). Y axis is fixed
 # "confident"/"inconfident" wording (2026-11-05, user-specified) --
-# Y is adjusted frequency (the original node_size column, see
+# Y is adjusted total frequency (the original node_size column, see
 # draw_point_vs_target()'s own swap-block comment and the file header
 # comment): a low value means the point/pair itself is rare (sparse
 # evidence, so whatever its X-axis KLD reading says is less trustworthy),
@@ -1756,9 +1940,12 @@ filter_to_annotated_points <- function(rows, badge_rows) {
   # see .open_canvas's own comment for the matching mar increase that
   # makes room for all three new rows.
   arrow_line <- mgp[2] + 1.4
-  label_line <- arrow_line + 0.5
-  label_cex <- 0.8
+  label_line <- arrow_line + 0.5 * .text_scale()
+  label_cex <- 0.8 * .text_scale()
 
+  hide_x <- isTRUE(getOption("kld.plot.hide_x_title", FALSE))
+  hide_y <- isTRUE(getOption("kld.plot.hide_y_title", FALSE))
+  if (!hide_x) {
   x_arrow_y <- usr[3] - arrow_line * line_in * y_per_in
   x_label_y <- usr[3] - label_line * line_in * y_per_in
   arrows(usr[1], x_arrow_y, usr[2], x_arrow_y, code = 3, length = 0.05,
@@ -1767,6 +1954,8 @@ filter_to_annotated_points <- function(rows, badge_rows) {
        col = "#888888", xpd = NA)
   text(usr[2], x_label_y, value_label, adj = c(1, 0.5), cex = label_cex,
        col = "#888888", xpd = NA)
+  }
+  if (hide_y) return(invisible())
 
   y_arrow_x <- usr[1] - arrow_line * line_in * x_per_in
   y_label_x <- usr[1] - label_line * line_in * x_per_in
@@ -1841,17 +2030,6 @@ load_and_merge_input <- function(input) {
   # time keeps every existing call site correct unchanged.
   input_paths <- strsplit(input, ",", fixed = TRUE)[[1]]
   tables <- lapply(input_paths, function(p) {
-    # Keep existing TSV commands usable with the compact published assets.
-    rds_path <- if (grepl("\\.rds$", p)) p else sub("\\.tsv$", ".rds", p)
-    if (!file.exists(p) && !file.exists(rds_path) &&
-        exists(".base_url", envir = .GlobalEnv, inherits = FALSE)) {
-      .fetch_browser_asset(paste0("data/processed/visualization/", basename(rds_path)), rds_path)
-    }
-    if (grepl("\\.rds$", p) || (!file.exists(p) && file.exists(rds_path))) {
-      d <- readRDS(rds_path)
-      stopifnot(is.data.frame(d), "point" %in% names(d))
-      return(d)
-    }
     suppressWarnings(data.table::fread(
       p, sep = "\t", header = TRUE, quote = "", encoding = "UTF-8",
       na.strings = c("NA", ""), colClasses = .POINT_TABLE_COL_CLASSES,
@@ -2009,6 +2187,8 @@ draw_point_vs_target <- function(input, output, point_label = "point",
                                   node_frequency_threshold_op = "gte",
                                   node_keyness_threshold = NULL,
                                   node_keyness_threshold_op = "gte",
+                                  node_signed_keyness_threshold = NULL,
+                                  node_signed_keyness_threshold_op = "gte",
                                   aggregate_locators = TRUE,
                                   max_group_members = 50,
                                   network_scale = 0.01,
@@ -2019,7 +2199,25 @@ draw_point_vs_target <- function(input, output, point_label = "point",
                                   kld_variant = NULL,
                                   frequency_type = NULL,
                                   label_lang = "ja",
-                                  unselected_alpha = 0.05) {
+                                  unselected_alpha = 0.05,
+                                  main_position = NULL,
+                                  inset_header_cex = 0.75,
+                                  inset_label_cex = NULL,
+                                  box_label_cex = 0.8,
+                                  text_scale = 1,
+                                  hide_x_title = FALSE,
+                                  hide_y_title = FALSE,
+                                  hide_x_ticks = FALSE,
+                                  hide_y_ticks = FALSE) {
+  # hide_x_title/hide_y_title(2026-11-14)：外部で複数枚を格子状に並べる
+  # 場合(図ex-7のdraft-short.org版)、最下段以外・最左列以外の格の軸の題と
+  # 方向矢印を省く。inset=TRUEの明示グリッドは格ごとに自前で上書きする。
+  old_text_opt <- options(kld.plot.text_scale = text_scale,
+                          kld.plot.hide_x_title = isTRUE(hide_x_title),
+                          kld.plot.hide_y_title = isTRUE(hide_y_title),
+                          kld.plot.hide_x_ticks = isTRUE(hide_x_ticks),
+                          kld.plot.hide_y_ticks = isTRUE(hide_y_ticks))
+  on.exit(options(old_text_opt), add = TRUE)
   # badge_layout="network"splices graphviz output in as svg XML text
   # (.splice_network_glyphs below) -- that only makes sense for a real
   # vector output, never png. Rather than make the caller get this
@@ -2066,6 +2264,8 @@ draw_point_vs_target <- function(input, output, point_label = "point",
   node_frequency_threshold_op <- .resolve_threshold_op(node_frequency_threshold_op)
   node_keyness_threshold <- if (!is.null(node_keyness_threshold)) as.numeric(node_keyness_threshold) else NULL
   node_keyness_threshold_op <- .resolve_threshold_op(node_keyness_threshold_op)
+  node_signed_keyness_threshold <- if (!is.null(node_signed_keyness_threshold)) as.numeric(node_signed_keyness_threshold) else NULL
+  node_signed_keyness_threshold_op <- .resolve_threshold_op(node_signed_keyness_threshold_op)
   # 只有edge_threshold真正从主图删点——双方向连关不够的pair本身不该出现
   # 在图上，这是结构性约束；其余5种(node_keyness是2026-11-07新增的第5种)
   # 无论是在这里(顶层)还是某个inset config自己设置，都只用来挑badge/
@@ -2090,12 +2290,12 @@ draw_point_vs_target <- function(input, output, point_label = "point",
   # very end of this function.
   d$.row_id <- seq_len(nrow(d))
   d_raw_cols <- d
-  # 横軸→point2target(旧keyness、2026-10-15から変更なし)、縦軸→頻度(調整後)
-  # に恒久的に差し替え。この「調整後の頻度」はtsvの生のfrequency列(KLD)
-  # ではなくnode_size列そのもの——log2(n_target)を表生成時にmax-min正規化
+  # 横軸→point2target(旧keyness、2026-10-15から変更なし)、縦軸→総頻度(調整後)
+  # に恒久的に差し替え。この「調整後の総頻度」はtsvの生のfrequency列(KLD)
+  # ではなくnode_size列そのもの——log2(total_freq+1)を表生成時に全表最大値で正規化
   # 済みの値で、以前はこれで点の大きさを決めていた(.size_scale自身の旧
   # コメント参照)。点の大きさは逆にdispersion(そのpoint/pair自身の分布の
-  # 均等さ)に差し替える——結果として頻度(調整後)とdispersionが担っていた
+  # 均等さ)に差し替える——結果として総頻度(調整後)とdispersionが担っていた
   # 表示(軸位置と点の大きさ)を入れ替えた形になる(2026-11-05、ユーザー
   # 確認済み：改めるのは縦軸だけで横軸のkeynessはそのまま、word/pair両方
   # の表に適用。最初frequency列=KLDだと誤解して軸に出したが、ユーザーが
@@ -2107,7 +2307,7 @@ draw_point_vs_target <- function(input, output, point_label = "point",
   # 全部d$frequency(x)/d$keyness(y)/d$node_size(大きさ)を素直に読むだけ
   # なので、ここで値を入れ替えておけば無改修で動く。neutral参考線/hi-lo
   # 色分け(どちらもd$keyness>neutralという符号付きKLD前提のロジック)は
-  # d$keynessが今は頻度(調整後、非負、符号なし)を保持しているので、本来の
+  # d$keynessが今は総頻度(調整後、非負、符号なし)を保持しているので、本来の
   # 前提とは噛み合わなくなるが、dispersionだった2026-10-15時点と同じく
   # 「既知の見た目のクセとして残す、今は直さない」というユーザー確認済み
   # の方針を踏襲する。
@@ -2138,7 +2338,9 @@ draw_point_vs_target <- function(input, output, point_label = "point",
     node_dispersion = node_dispersion_threshold, node_dispersion_op = node_dispersion_threshold_op,
     frequency = frequency_threshold, frequency_op = frequency_threshold_op,
     node_frequency = node_frequency_threshold, node_frequency_op = node_frequency_threshold_op,
-    node_keyness = node_keyness_threshold, node_keyness_op = node_keyness_threshold_op
+    node_keyness = node_keyness_threshold, node_keyness_op = node_keyness_threshold_op,
+    node_signed_keyness = node_signed_keyness_threshold,
+    node_signed_keyness_op = node_signed_keyness_threshold_op
   )
   cand_idx <- .selection_filter_idx(d, selection_spec)
   colors <- .compute_point_colors(d, highlight, highlight_pairs, annotate_point_exclude,
@@ -2200,7 +2402,9 @@ draw_point_vs_target <- function(input, output, point_label = "point",
                          network_node_gap = network_node_gap,
                          zoom_annotated_only = zoom_annotated_only,
                          repel_annotated_only = repel_annotated_only,
-                         kld_variant = kld_variant, label_lang = label_lang)
+                         kld_variant = kld_variant, label_lang = label_lang,
+                         main_position = main_position, inset_header_cex = inset_header_cex,
+                         inset_label_cex = inset_label_cex, box_label_cex = box_label_cex)
     cat(output, ":", nrow(d), point_label, "points\n")
     return(invisible(annotated_table))
   }
@@ -2215,12 +2419,13 @@ draw_point_vs_target <- function(input, output, point_label = "point",
                                annotate_nontarget_only, annotate_point_exclude,
                                badge_selection, frontier_n, aggregate_locators,
                                annotate_pairs = annotate_pairs)
-  # aggregate_locators=TRUEの時、badge_rowsは既に(n_target, n_not_target,
-  # kind)で1行にまとめられた後(.aggregate_locator_groups)なので、表
-  # タブ用の「annotateされた点」一覧にはそのまま使えない(合算後の代表行
-  # 1つしか出てこなくなる)。aggregate_locators=FALSEで同じselect_badges
-  # をもう一度呼び、集約前の個々の点(「annotateされた点」ではあるが、
-  # まだ合算されていない実際の座標を持つ行)を別に用意する。
+  # .draw_x_tie_boxes自身のdocstring参照：aggregate_locators=TRUEの時、
+  # badge_rowsは既に(n_target, n_not_target, kind)で1行にまとめられた後
+  # (.aggregate_locator_groups)なので、同じキーでもう一度グループ化しよ
+  # うとしても各グループが必ず1行になり、箱が一つも描けなくなる
+  # (2026-10-17にユーザー報告で発覚)。aggregate_locators=FALSEで同じ
+  # select_badgesをもう一度呼び、集約前の個々の点(「annotateされた点」
+  # ではあるが、まだ合算されていない実際の座標を持つ行)を別に用意する。
   tie_box_rows <- select_badges(d_cand, annotate_words, label_top_n, neutral,
                                  annotate_nontarget_only, annotate_point_exclude,
                                  badge_selection, frontier_n,
@@ -2234,7 +2439,7 @@ draw_point_vs_target <- function(input, output, point_label = "point",
   annotated_table <- .format_display_columns(annotated_table)
 
   .open_canvas(output, canvas_size)
-  on.exit(dev.off())
+  on.exit(dev.off(), add = TRUE)
   .draw_axes(d, ranges, nofreq, axis_label, point_label, breaks$x_break, breaks$y_break,
              kld_variant = kld_variant, label_lang = label_lang)
 
@@ -2248,10 +2453,14 @@ draw_point_vs_target <- function(input, output, point_label = "point",
          cex = .size_scale(d_drawn$node_size), col = d_drawn$point_col)
 
   pc <- panel_coord_converters()
-  badge_cex <- 0.55
+  badge_cex <- 0.55 * .text_scale()
   fam <- getOption("kld.plot.font_family", "Hiragino Mincho ProN")
   label_gap_in <- strheight("あ", cex = badge_cex, family = fam) * 0.5
 
+  tie_boxes <- .compute_x_tie_boxes(
+    tie_box_rows, point_radius_in = .cex_to_radius_in(.size_scale(tie_box_rows$node_size))
+  )
+  .draw_x_tie_boxes(tie_boxes)
   badge_colors <- .badge_color_from_point(badge_rows)
   .draw_badges(badge_rows, fill = badge_colors$fill, border = badge_colors$border_col,
                text_col = badge_colors$text_col, word_col = badge_colors$word_col,
@@ -2261,7 +2470,8 @@ draw_point_vs_target <- function(input, output, point_label = "point",
                x_per_in = pc$x_per_in, y_per_in = pc$y_per_in,
                data_to_in_x = pc$data_to_in_x, data_to_in_y = pc$data_to_in_y,
                in_to_data_x = pc$in_to_data_x, in_to_data_y = pc$in_to_data_y,
-               pin = pc$pin, neutral = neutral, max_group_members = max_group_members)
+               pin = pc$pin, neutral = neutral, max_group_members = max_group_members,
+               tie_boxes = tie_boxes)
 
   .draw_axis_direction_arrows(value_label, not_value_label)
   .draw_size_legend(d$node_size, pc$pin, pc$in_to_data_x, pc$in_to_data_y,
@@ -2309,13 +2519,113 @@ draw_point_vs_target <- function(input, output, point_label = "point",
 # 紧的那个框几乎总是落在松的那个框内部)，光靠颜色/字母不够一眼分开，
 # 额外让每个config轮换不同的虚线样式(LTY，默认仍是"1343"跟原来一样)。
 # label=NULL(单config/旧用法)时完全不画字母，跟改动前逐像素一致。
-.draw_source_box <- function(box, border_col, label = NULL, lty = "1343") {
+.draw_source_box <- function(box, border_col, label = NULL, lty = "1343", label_cex = 0.8,
+                             label_x = box$x1) {
   rect(box$x1, box$y1, box$x2, box$y2, border = border_col, lty = lty,
        lwd = 1.2, xpd = NA)
   if (!is.null(label) && nzchar(label)) {
-    text(box$x1, box$y2, labels = label, adj = c(1.2, -0.3), xpd = NA,
-         col = border_col, font = 2, cex = 0.8)
+    text(label_x, box$y2, labels = label, adj = c(1.2, -0.3), xpd = NA,
+         col = border_col, font = 2, cex = label_cex)
   }
+}
+
+# 2026-10-17、ユーザー確認済み：X軸(point→target KLD)の値が完全一致する
+# tieでグループ化していた最初の版は、低頻度語の大半を取りこぼしていた
+# ことが判明した -- pair_cross_table自身のdocstring通り、population
+# (分母側)はMEASURED自身が実際に現れる行ごとに計算される(scope全体で
+# 共有される定数ではない)ため、n_target/n_not_targetが同じ組み合わせ
+# でも実際に現れる行が違えばKLDはわずかに(だが非ゼロに)ズレる--図の
+# 上では同じ場所に密集して見えても、浮動小数点としては別の値になる。
+# なのでグループ化の基準をX(keyness)の完全一致から、ROWSが実際に持つ
+# n_target/n_not_target(target/neg_target側のmatch数、こちらは本当に
+# 同じ値になる)の一致に変更。X・Y両方ともその組の値の範囲(min~max)を
+# 取った外接矩形を描く(前版は常にX固定の細い縦長の箱だったが、今は同じ
+# グループ内でもXが微妙にばらつくため、Xにも幅を持たせる必要がある)。
+# MIN_GROUP_SIZE=2(2026-10-17、ユーザー確認済み：一度3に引き上げたが、
+# ちょうど2点共有している組も箱で強調したいとのことで2に戻した -- 2点
+# 以上共有している組は全て箱で囲む)。INSET_PAD_FRACで外接矩形の外側に
+# 少し余白を持たせる(点のマーカーぎりぎりに箱の辺が重ならないように)。
+# badge_selection問わず(前版はbadge_selection="zoom_box"限定だったが、
+# この分析自体はbadge選択方式と無関係なので2026-10-17に限定を外した)
+# 常に実行する。
+#
+# ROWSには実際にannotateされた点のみを渡す(d_drawn/dd--描画されている
+# 点全部--を試したところ、annotateされていない点まで箱に入るのはノイズ
+# が多すぎるとユーザーからフィードバックがあり、2026-10-17に絞った)が、
+# aggregate_locators=TRUEの時のbadge_rowsをそのまま渡してはいけない --
+# .aggregate_locator_groups()が既に同じ(n_target, n_not_target, kind)
+# キーで1行にまとめた後なので、ここでもう一度同じキーでグループ化しても
+# 各グループが必ず1行になり、箱が一つも描けない(2026-10-17ユーザー報告
+# で発覚："框完全消失了")。呼び出し元(draw_point_vs_target)は
+# aggregate_locators=FALSEでselect_badgesをもう一度呼んだ
+# tie_box_rows(「annotateされた点」ではあるが集約されていない、各点
+# 自身の実座標を保ったままの行)を渡すこと -- badge_rows自体(集約後、
+# badge表示用)は変更しない。
+#
+# .compute_x_tie_boxes()はrect()を直接描かず、{key: {x1,y1,x2,y2}}
+# (dataの座標系のまま)を返すだけ -- .draw_badges()自身の連結線も、この
+# 点のbadgeがどこかの箱に属している時は箱の辺から出発させたい
+# (2026-10-17、ユーザー確認済み：「線がもし框なら、框のedgeから出発」)
+# ので、計算結果を.draw_x_tie_boxes()(実際に描く)と.draw_badges()
+# (連結線の出発点を決める)の両方で共有できるよう、計算と描画を分離した。
+# POINT_RADIUS_IN(ROWSと同じ長さ、各点を実際に描いた時のpch記号の半径を
+# インチで)はオプション -- 渡されなければ0扱い(旧来通り、usrのごく小さい
+# 一定割合だけの余白)。渡す理由(2026-10-17ユーザー報告"放大模式下没有
+# 和node一样被扩大，导致node溢出框体")：INSET_PAD_FRACはusrの範囲に対する
+# 固定割合なので、インチ換算すると「パネル幅の一定%」という、ズーム
+# レベルに関係なく常に同じ絶対サイズになる(usrが狭くなるほど1データ単位
+# あたりのインチ数が増えるので、data単位の余白をインチに戻すと両者が
+# 打ち消し合う)。一方render_zoomed_scatter_panel側の点のcexはzoom_factor
+# (最大4倍)で別途拡大されるため、ズームパネルでは記号の実際の半径が
+# パネル幅に対して不釣り合いに大きくなり、この固定インチ幅の余白では
+# 包みきれなくなる。各グループの最大記号半径(呼び出し元がそのパネルで
+# 実際に使ったcex式と同じ式で算出し、インチのまま渡す)をデータ単位に
+# 換算して、INSET_PAD_FRAC由来の余白とのmaxを取ることで、記号がどれだけ
+# 拡大されていても箱が必ず記号を覆うようにする。
+.compute_x_tie_boxes <- function(rows, point_radius_in = NULL, inset_pad_frac = 0.01,
+                                  min_group_size = 2) {
+  if (nrow(rows) < min_group_size) return(list())
+  usr <- par("usr"); pin <- par("pin")
+  xpad <- diff(usr[1:2]) * inset_pad_frac
+  ypad <- diff(usr[3:4]) * inset_pad_frac
+  x_per_in <- diff(usr[1:2]) / pin[1]
+  y_per_in <- diff(usr[3:4]) / pin[2]
+  if (is.null(point_radius_in)) point_radius_in <- rep(0, nrow(rows))
+  key <- paste(rows$n_target, rows$n_not_target, sep = "/")
+  groups <- split(seq_len(nrow(rows)), key)
+  boxes <- list()
+  for (k in names(groups)) {
+    idx <- groups[[k]]
+    if (length(idx) < min_group_size) next
+    x_rng <- range(rows$frequency[idx])
+    y_rng <- range(rows$keyness[idx])
+    if (diff(x_rng) <= 0 && diff(y_rng) <= 0) next
+    max_radius_in <- max(point_radius_in[idx], 0)
+    pad_x <- max(xpad, max_radius_in * x_per_in)
+    pad_y <- max(ypad, max_radius_in * y_per_in)
+    boxes[[k]] <- list(x1 = x_rng[1] - pad_x, y1 = y_rng[1] - pad_y,
+                        x2 = x_rng[2] + pad_x, y2 = y_rng[2] + pad_y)
+  }
+  boxes
+}
+
+# cex(文字/記号サイズの倍率)から、その記号(pch 0:25系)がおおよそ占める
+# 半径をインチで概算する -- Rのpch記号は1文字分の高さ(par("cin")[2])を
+# 基準にcex倍されるので、直径をcex*cin[2]、半径をその半分とする近似。
+# ピクセル単位で厳密に一致させる必要はない(.compute_x_tie_boxes側は
+# これにinset_pad_fracの余白もさらに足すので、多少大きめに見積もる分には
+# 問題なく、小さすぎる方だけが実害になる)。
+.cex_to_radius_in <- function(cex) cex * par("cin")[2] * 0.5
+
+# 単純な箱のみ描く(badge=文字ラベル付きではない)、グループを選別する
+# 閾値/上限は.compute_x_tie_boxes側のMIN_GROUP_SIZE以外に設けない
+# (ユーザー確認済み)。灰色の破線(2026-10-17、赤の実線から変更、
+# ユーザー確認済み)。
+.draw_x_tie_boxes <- function(boxes, border_col = "#999999") {
+  for (box in boxes) {
+    rect(box$x1, box$y1, box$x2, box$y2, border = border_col, lty = 2, lwd = 1, xpd = NA)
+  }
+  invisible(NULL)
 }
 
 # 源框(主图里，标出被放大的区域)、目标框(放大图本身的绘图区)四个角一一
@@ -2354,7 +2664,8 @@ draw_point_vs_target <- function(input, output, point_label = "point",
 render_inset_source_panel <- function(d, ranges, nofreq, axis_label, point_label, breaks,
                                        zboxes, inset_border_col, value_label, not_value_label,
                                        colors, default_label, kld_variant = NULL,
-                                       box_labels, box_ltys, label_lang = "ja") {
+                                       box_labels, box_ltys, label_lang = "ja",
+                                       box_label_cex = 0.8) {
   .draw_axes(d, ranges, nofreq, axis_label, point_label, breaks$x_break, breaks$y_break,
              kld_variant = kld_variant, label_lang = label_lang)
   points(d$frequency, d$keyness, pch = d$point_pch,
@@ -2363,8 +2674,27 @@ render_inset_source_panel <- function(d, ranges, nofreq, axis_label, point_label
   # 面板的par("usr")就不再是"当前"绘图区的坐标系了
   src_ndc_x <- vector("list", length(zboxes))
   src_ndc_y <- vector("list", length(zboxes))
+  # 字母の重なり回避(2026-11-14)：ほぼ同じ框角に複数の字母が来る場合
+  # (例：閾値の近いD/Eの框がほぼ一致)、先に置いた字母と重なる分だけ
+  # 左へずらす。重ならない場合はlabel_x=x1のままで従来と同じ位置。
+  placed <- list()
   for (i in seq_along(zboxes)) {
-    .draw_source_box(zboxes[[i]], inset_border_col, label = box_labels[i], lty = box_ltys[i])
+    zb <- zboxes[[i]]
+    lab <- box_labels[i]
+    label_x <- zb$x1
+    if (!is.null(lab) && nzchar(lab)) {
+      lw <- strwidth(lab, cex = box_label_cex, font = 2) * 1.2
+      lh <- strheight(lab, cex = box_label_cex, font = 2) * 1.2
+      repeat {
+        hit <- vapply(placed, function(p) abs(p[1] - label_x) < lw && abs(p[2] - zb$y2) < lh,
+                      logical(1))
+        if (!any(hit)) break
+        label_x <- label_x - lw
+      }
+      placed[[length(placed) + 1]] <- c(label_x, zb$y2)
+    }
+    .draw_source_box(zb, inset_border_col, label = lab, lty = box_ltys[i],
+                     label_cex = box_label_cex, label_x = label_x)
     src_ndc_x[[i]] <- grconvertX(c(zboxes[[i]]$x1, zboxes[[i]]$x2), from = "user", to = "ndc")
     src_ndc_y[[i]] <- grconvertY(c(zboxes[[i]]$y1, zboxes[[i]]$y2), from = "user", to = "ndc")
   }
@@ -2379,59 +2709,59 @@ render_inset_source_panel <- function(d, ranges, nofreq, axis_label, point_label
 }
 
 # ---- inset上半(single_locator时)：整块面板换成一张网络图 ----
-# Use the same R renderer in native R and WebAssembly; no subprocesses.
 render_network_glyph_panel <- function(badge_rows, inset_border_col, value_label, not_value_label,
                                         network_scale, network_node_gap) {
-  members <- if (!is.null(badge_rows$group_size)) badge_rows$members[[1]] else badge_rows
-  if (nrow(members) > 500) {
-    strength <- pmax(abs(members$assoc_w1_to_w2), abs(members$assoc_w2_to_w1))
-    members <- members[strength >= quantile(strength, 0.99, na.rm = TRUE), , drop = FALSE]
-  }
-  field1 <- if (is.null(members$field1)) NA_character_ else members$field1
-  field2 <- if (is.null(members$field2)) NA_character_ else members$field2
-  w1 <- .concept_display_text(members$w1, field1)
-  w2 <- .concept_display_text(members$w2, field2)
-  nodes <- unique(c(w1, w2))
-  v12 <- members$assoc_w1_to_w2
-  v21 <- members$assoc_w2_to_w1
-  c1 <- ifelse(v12 > v21, "#111111", "#CC2200")
-  c2 <- ifelse(v12 > v21, "#CC2200", "#111111")
-  edges <- data.frame(from = c(w1, w2), to = c(w2, w1))
-  graph <- igraph::graph_from_data_frame(edges, directed = TRUE,
-                                        vertices = data.frame(name = nodes))
-  # A circular seed makes the force-directed layout reproducible without
-  # changing the caller's random-number generator state.
-  seed <- igraph::layout_in_circle(graph)
-  layout <- if (length(nodes) > 1) igraph::layout_with_fr(graph, coords = seed, niter = 200) else seed
-  node_colors <- ifelse(nodes %in% c(w1[c1 == "#CC2200"], w2[c2 == "#CC2200"]),
-                        "#CC2200", "#111111")
-  fields <- c(rep_len(field1, length(w1)), rep_len(field2, length(w2)))[match(nodes, c(w1, w2))]
-  shapes <- ifelse(is.na(fields) | fields == "entry", "circle", "square")
-  strength <- abs(c(v12, v21))
-  max_strength <- max(strength, na.rm = TRUE)
-  widths <- if (is.finite(max_strength) && max_strength > 0) pmax(0.8, 4 * strength/max_strength) else rep(0.8, length(strength))
-  igraph::plot.igraph(graph, layout = layout,
-      # vertex.label.degree=pi/2 + vertex.label.dist>0 moves the label off
-      # the node (below it, screen-space, verified empirically -- igraph's
-      # own docs are ambiguous about sign) instead of centered on top of
-      # it -- centered labels were illegible on the square (non-"entry")
-      # nodes, where the label text routinely overflowed the node's own
-      # fill and collided with incident edges (2026-11-07 user feedback
-      # "network里的字不是很清晰").
-      vertex.label = nodes, vertex.label.family = getOption("kld.plot.font_family", "sans"),
-      vertex.label.cex = 0.7, vertex.label.color = node_colors,
-      vertex.label.degree = pi / 2, vertex.label.dist = 1.6,
-      vertex.color = "white", vertex.frame.color = node_colors, vertex.shape = shapes,
-      vertex.size = (8 + 4 * network_scale) / max(0.2, network_node_gap),
-      edge.color = c(c1, c2), edge.width = widths, edge.arrow.size = 0.25,
-      edge.curved = 0.15, margin = 0.2)
+  # plot.window(c(0,1),c(0,1))只是为了拿到一套跟这块fig区域对应的usr/pin，
+  # 数值本身没有数据含义——这块面板整个让给网络图
+  plot.new()
+  plot.window(xlim = c(0, 1), ylim = c(0, 1), xaxs = "i", yaxs = "i")
   box(col = inset_border_col, lwd = 1.5)
-  legend("topleft", legend = sprintf("%s:%d / %s:%d", value_label, badge_rows$n_target[1],
-         not_value_label, badge_rows$n_not_target[1]), bty = "n", cex = 0.65)
   pc <- panel_coord_converters()
-  list(pending = list(),
-       dest_ndc_x = grconvertX(pc$usr[1:2], from = "user", to = "ndc"),
-       dest_ndc_y = grconvertY(pc$usr[3:4], from = "user", to = "ndc"),
+  dest_ndc_x <- grconvertX(pc$usr[1:2], from = "user", to = "ndc")
+  dest_ndc_y <- grconvertY(pc$usr[3:4], from = "user", to = "ndc")
+
+  # 补一个跟普通badge同款配色/字号的计数框，固定贴在左上角——这块面板不画
+  # 坐标轴/badge，女/非女计数原本无处可看(2026-09-22用户指出)
+  badge_cex_net <- 0.55 * .text_scale()
+  fam_net <- getOption("kld.plot.font_family", "Hiragino Mincho ProN")
+  count_label_net <- sprintf("%s:%d / %s:%d", value_label, badge_rows$n_target[1],
+                              not_value_label, badge_rows$n_not_target[1])
+  count_w_in <- strwidth(count_label_net, cex = badge_cex_net, family = fam_net, units = "inches")
+  count_h_in <- strheight(count_label_net, cex = badge_cex_net, family = fam_net, units = "inches")
+  net_box_w_in <- count_w_in + count_w_in * 0.35
+  net_box_h_in <- count_h_in + count_h_in * 1.2
+  net_pad_in <- 0.08
+  net_colors <- .badge_color_from_point(badge_rows[1, , drop = FALSE])
+  rect(pc$in_to_data_x(net_pad_in), pc$in_to_data_y(pc$pin[2] - net_pad_in - net_box_h_in),
+       pc$in_to_data_x(net_pad_in + net_box_w_in), pc$in_to_data_y(pc$pin[2] - net_pad_in),
+       col = net_colors$fill, border = net_colors$border_col, xpd = NA)
+  text(pc$in_to_data_x(net_pad_in + net_box_w_in / 2),
+       pc$in_to_data_y(pc$pin[2] - net_pad_in - net_box_h_in / 2),
+       labels = count_label_net, cex = badge_cex_net, family = fam_net,
+       col = net_colors$text_col, xpd = NA)
+
+  members <- if (!is.null(badge_rows$group_size)) {
+    badge_rows$members[[1]]
+  } else {
+    net_member_cols <- c("w1", "w2", "freq1", "freq2", "assoc_w1_to_w2", "assoc_w2_to_w1")
+    if (!is.null(badge_rows$field1)) net_member_cols <- c(net_member_cols, "field1", "field2")
+    badge_rows[, net_member_cols]
+  }
+  svg_txt <- .render_pair_network_svg(members, network_scale = network_scale,
+                                        network_node_gap = network_node_gap)
+  dims <- .parse_svg_dims_pt(svg_txt)
+  # 填满整块框(留一点padding)、等比例缩放(fit，不裁剪)——这块面板本来就
+  # 只给网络图用，不需要跟badge计数框文字比大小
+  pad_in <- 0.15
+  avail_w_in <- max(pc$pin[1] - 2 * pad_in, 0.1)
+  avail_h_in <- max(pc$pin[2] - 2 * pad_in, 0.1)
+  fit_scale <- min(avail_w_in * 72 / dims$w, avail_h_in * 72 / dims$h)
+  w_in <- dims$w * fit_scale / 72
+  h_in <- dims$h * fit_scale / 72
+  pending <- list(list(svg_txt = svg_txt, gv_w_pt = dims$w, gv_h_pt = dims$h,
+                        x1_in = (pc$pin[1] - w_in) / 2, y1_in = (pc$pin[2] - h_in) / 2,
+                        w_in = w_in, h_in = h_in))
+  list(pending = pending, dest_ndc_x = dest_ndc_x, dest_ndc_y = dest_ndc_y,
        in_to_data_x = pc$in_to_data_x, in_to_data_y = pc$in_to_data_y, pin = pc$pin)
 }
 
@@ -2467,7 +2797,7 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
   box(col = inset_border_col, lwd = 1.5)
 
   pc <- panel_coord_converters()
-  badge_cex <- 0.55
+  badge_cex <- 0.55 * .text_scale()
   fam <- getOption("kld.plot.font_family", "Hiragino Mincho ProN")
   label_gap_in <- strheight("あ", cex = badge_cex, family = fam) * 0.5
   # 投影线目标端连到放大图这边的框角——这边box就是整个坐标轴窗口，
@@ -2475,6 +2805,11 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
   dest_ndc_x <- grconvertX(pc$usr[1:2], from = "user", to = "ndc")
   dest_ndc_y <- grconvertY(pc$usr[3:4], from = "user", to = "ndc")
 
+  tie_boxes <- .compute_x_tie_boxes(
+    tie_box_rows,
+    point_radius_in = .cex_to_radius_in(zoom_factor * .size_scale(tie_box_rows$node_size))
+  )
+  .draw_x_tie_boxes(tie_boxes)
   badge_colors <- .badge_color_from_point(badge_rows)
   .draw_badges(badge_rows, fill = badge_colors$fill, border = badge_colors$border_col,
                text_col = badge_colors$text_col, word_col = badge_colors$word_col,
@@ -2484,12 +2819,22 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
                x_per_in = pc$x_per_in, y_per_in = pc$y_per_in,
                data_to_in_x = pc$data_to_in_x, data_to_in_y = pc$data_to_in_y,
                in_to_data_x = pc$in_to_data_x, in_to_data_y = pc$in_to_data_y,
-               pin = pc$pin, neutral = neutral, max_group_members = max_group_members)
+               pin = pc$pin, neutral = neutral, max_group_members = max_group_members,
+               tie_boxes = tie_boxes)
   .draw_axis_direction_arrows(value_label, not_value_label)
   list(pending = list(), dest_ndc_x = dest_ndc_x, dest_ndc_y = dest_ndc_y,
        in_to_data_x = pc$in_to_data_x, in_to_data_y = pc$in_to_data_y, pin = pc$pin)
 }
 
+# 主图/放大图两块正方形panel各自的fig区间+画布该往哪个方向翻倍——
+# width_multiplier=2时画布整体加宽(左右分栏)，height_multiplier=2时画布
+# 整体加高(上下叠放)，两者互斥(每次只翻一个方向，另一个方向保持1倍，
+# 两块panel永远是正方形，不会因为翻倍方向不同就被拉伸变形)。"top"是
+# 2026-09-21就有的默认布局("扩大图改为放在上方")，width_multiplier这个
+# 参数当时就是为了给"left/right"这类以后可能要支持的方向预留的(见
+# .open_canvas自己的注释"width_multiplier保留但目前没有调用方在用")，
+# 2026-09-29正式用上，加了"bottom"/"left"/"right"三个新方向(用户要求
+# "可以调整放大框放在主图的上下左右")。
 # 3x3罗盘网格，中心格(2,2)固定留给主图，8个外围格子是合法的inset位置
 # (2026-11-07从原来只有top/bottom/left/right四个switch分支扩展成网格，
 # 为了让top_right/bottom_right/top_left/bottom_left这几个真正的"角落"
@@ -2510,7 +2855,66 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
 # 保证不管用了几列/几行，每个格子都还是边长canvas_size的正方形(跟
 # .open_canvas自己的约定一致)。重复的方位/未知方位名都是调用方的错误，
 # 直接stop()，不静默合并或忽略。
-.inset_grid_layout <- function(positions) {
+# 显式网格(2026-11-13，draft-short.org用的3行×2列、主图左上)：
+# MAIN_POSITION或任一POSITIONS写成"r<行>c<列>"(行从上往下、列从左往右，
+# 都从1起)时走这条分支——此时所有POSITIONS都必须是rRcC写法，主图默认
+# r1c1。网格大小取用到的最大行/列号。MAIN_POSITION为NULL且没有rRcC时
+# 完全走原来的罗盘网格，旧图逐像素不变。
+.GRID_CELL_RE <- "^r([0-9]+)c([0-9]+)$"
+# 显式网格的边距(行数，未乘canvas_scale)：最左列/最下行留出轴标题和
+# 方向箭头的5行，其余只留刻度数字所需的行数；列宽/行高按各自的边距
+# 分别算(画布总宽高随之变化)，保证每格的绘图区都是边长相同的正方形
+# (=canvas_size减去原来主图左右/上下合计6行)。
+.GRID_MAR_FULL <- 5.0
+.GRID_MAR_TICKS <- 1.5
+.GRID_MAR_RIGHT <- 1.0 # 左右の間隔はやや広め、上下は詰める(2026-11-14)
+# 轴标题/方向箭头只在最下行(x)、最左列(y)显示；最下行的格子是网络图
+# (没有坐标轴)时也照样在它下方画x轴标题和箭头(.render_with_insets)，
+# 让x轴标题始终位于图的最下沿(例：图ex-1的E)。
+.explicit_grid_layout <- function(positions, main_position, top_lines = 2.6) {
+  if (is.null(main_position)) main_position <- "r1c1"
+  all_pos <- c(main_position, positions)
+  bad <- all_pos[!grepl(.GRID_CELL_RE, all_pos)]
+  if (length(bad) > 0) {
+    stop("显式网格(main_position/rRcC)时所有inset_position都必须是r<行>c<列>写法，收到: ",
+         paste(bad, collapse = ", "))
+  }
+  if (length(all_pos) != length(unique(all_pos))) {
+    stop("主图/inset的网格位置有重复: ", paste(all_pos, collapse = ", "))
+  }
+  rc <- regmatches(all_pos, regexec(.GRID_CELL_RE, all_pos))
+  rr <- as.integer(vapply(rc, `[`, "", 2)); cc <- as.integer(vapply(rc, `[`, "", 3))
+  nr <- max(rr); nc <- max(cc)
+  # 全部以mar的"行"为单位计算：canvas_size一格对应
+  # canvas_size/72 / (0.2*canvas_scale) = 300/72/0.2 ≈ 20.83行
+  # (csi=0.2in@pointsize 12，mar又乘了canvas_scale，canvas_size约掉)。
+  cell_lines <- 300 / 72 / 0.2
+  square <- cell_lines - 6
+  left <- ifelse(seq_len(nc) == 1, .GRID_MAR_FULL, .GRID_MAR_TICKS)
+  bottom <- ifelse(seq_len(nr) == nr, .GRID_MAR_FULL, .GRID_MAR_TICKS)
+  col_w <- square + left + .GRID_MAR_RIGHT
+  row_h <- square + bottom + top_lines
+  W <- sum(col_w); H <- sum(row_h)
+  col_x0 <- c(0, cumsum(col_w))[seq_len(nc)]
+  row_top <- c(0, cumsum(row_h))[seq_len(nr)]
+  cell <- function(r, c) {
+    # 浮動小数の誤差で0/1をわずかに外れるとpar(fig=)がエラーになるので丸める
+    fig <- c(col_x0[c] / W, (col_x0[c] + col_w[c]) / W,
+             (H - row_top[r] - row_h[r]) / H, (H - row_top[r]) / H)
+    list(fig = pmin(pmax(round(fig, 10), 0), 1),
+         mar = c(bottom[r], left[c], top_lines, .GRID_MAR_RIGHT),
+         hide_x = r != nr, hide_y = c != 1)
+  }
+  cells <- lapply(seq_along(all_pos), function(i) cell(rr[i], cc[i]))
+  list(main = cells[[1]]$fig, insets = lapply(cells[-1], `[[`, "fig"),
+       main_cell = cells[[1]], inset_cells = cells[-1],
+       width_multiplier = W / cell_lines, height_multiplier = H / cell_lines)
+}
+
+.inset_grid_layout <- function(positions, main_position = NULL, top_lines = 2.6) {
+  if (!is.null(main_position) || any(grepl(.GRID_CELL_RE, positions))) {
+    return(.explicit_grid_layout(positions, main_position, top_lines))
+  }
   if (length(positions) != length(unique(positions))) {
     stop("inset_configs里有重复的inset_position: ", paste(positions, collapse = ", "))
   }
@@ -2535,9 +2939,9 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
 }
 
 # 向后兼容：单个位置的薄封装，供.render_with_inset()(单bundle legacy路径)
-# 以及其它可能的直接调用方使用。跟原来4个switch分支数值上逐一核对过完全
-# 一致(top: main=0,1,0,0.5/inset=0,1,0.5,1；bottom反过来；left: main=0.5,1,0,1/
-# inset=0,0.5,0,1；right反过来)。
+# 以及visualization-repo里可能存在的直接调用方使用。跟原来4个switch分支
+# 数值上逐一核对过完全一致(top: main=0,1,0,0.5/inset=0,1,0.5,1；bottom反过来；
+# left: main=0.5,1,0,1/inset=0,0.5,0,1；right反过来)。
 .inset_fig_regions <- function(inset_position) {
   lay <- .inset_grid_layout(inset_position)
   list(main = lay$main, inset = lay$insets[[1]],
@@ -2645,6 +3049,8 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
   })
 }
 
+# 跟.aggregate_locator_groups()/.render_with_insets()原来内嵌的判定同一套
+# 逻辑，抽成独立函数只是为了在多config场景下能对每个bundle各自调用一次。
 # badge_rows里所有候选汇总起来是否只对应一个locator(n_target/n_not_target
 # 完全相同、同一种pair组合field1+field2)——这种情况下"放大图"要整块换成
 # 网络图(见render_network_glyph_panel)，不画独立坐标轴的散点面板。
@@ -2658,18 +3064,32 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
 
 # 放大框上方一行文字："A: 分散度 ≥ 0.1"这样，字母+filter描述。用
 # mtext(side=3)相对"当前panel自己的坐标系"画，散点面板/网络图面板
-# (两者坐标系含义完全不同)都适用，不需要额外的坐标换算。
-.draw_inset_header <- function(label, desc, col, cex = 0.75,
+# (两者坐标系含义完全不同)都适用，不需要额外的坐标换算。label为空字符串
+# (单config的legacy场景)且desc也是"(フィルタなし)"时仍然画这一行——
+# desc本身永不NULL，只有调用方不想画任何说明时才会跳过整个调用(目前
+# 没有这种调用方，.render_with_insets()总是会画)。
+# LABEL_CEX(2026-11-13)：非NULL时字母单独加粗、按这个字号画，filter描述
+# 接在字母右边按CEX画；NULL时跟原来一样"A: desc"整行同一个字号。
+.draw_inset_header <- function(label, desc, col, cex = 0.75, label_cex = NULL,
                                 fam = getOption("kld.plot.font_family", "Hiragino Mincho ProN")) {
-  txt <- if (nzchar(label)) sprintf("%s: %s", label, desc) else desc
-  mtext(txt, side = 3, line = 0.3, adj = 0, cex = cex, col = col, family = fam)
+  if (is.null(label_cex) || !nzchar(label)) {
+    txt <- if (nzchar(label)) sprintf("%s: %s", label, desc) else desc
+    mtext(txt, side = 3, line = 0.3, adj = 0, cex = cex, col = col, family = fam)
+    return(invisible())
+  }
+  usr <- par("usr")
+  mtext(label, side = 3, line = 0.3, adj = 0, at = usr[1], cex = label_cex, font = 2,
+        col = col, family = fam)
+  lab_w <- strwidth(paste0(label, " "), units = "user", cex = label_cex, font = 2, family = fam)
+  mtext(desc, side = 3, line = 0.3, adj = 0, at = usr[1] + lab_w, cex = cex,
+        col = col, family = fam)
 }
 
 # inset=TRUE的完整渲染路径，跟非inset路径(draw_point_vs_target主体)完全
 # 独立，互不影响。.inset_grid_layout()按每个bundle的inset_position算出
 # 画布该用几列几行、主图/各放大图各自的fig区间，分别调用.draw_axes——
 # 每一块单独看，跟一张普通的(非inset)图用同一套margin/字号，视觉上完全
-# 一致。校准标记/投影线/网络图拼接这几处都只读"当前panel自己的坐标系"
+# 一致。校准标记/投影线/网络图svg拼接这几处都只读"当前panel自己的坐标系"
 # (par("usr")/par("pin")这类)，不假设主图在哪、放大图在哪，inset_position
 # 换方向不需要改这几处。
 #
@@ -2677,14 +3097,10 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
 # 单inset的legacy路径(bundles[[1]]$label==""，不画字母/filter说明以外的
 # 任何额外元素，投影虚线正常画)。长度>1时：每个bundle在主图上有自己的
 # 虚线指示框(字母+轮换的lty)，不画投影虚线(多组线交叉太乱)。任一个或多个
-# bundle退化成single_locator(网络图面板)不再stop()(2026-11-07第二次确认
-# 解除)——render_network_glyph_panel本身用igraph::plot.igraph()直接画
-# 在当前par(fig=...)区域里，跟render_zoomed_scatter_panel同一种"画进
-# 当前面板"机制，不像main repo那样要靠全局共享的SVG校准标记做事后拼接，
-# 所以这里原本的限制只是"为了跟main repo行为一致"而加的人为限制，不是
-# 这条代码路径本身做不到。第一次解除后曾因"从未在webR下验证过多次调用
-# igraph布局算法是否安全"而撤回，这次按用户要求（已在浏览器里确认单个
-# 网络面板能正常画）重新解除，继续跟踪部署后的真实表现。
+# bundle退化成single_locator(网络图面板)不再stop()——2026-11-07起
+# .splice_network_glyphs()按面板分组各自的校准标记+仿射变换(每个网络
+# 面板自己的2个标记，不再全局共用一份)，同一张图里可以同时有多个网络
+# 面板(以及普通散点放大面板)共存，见该函数自己的docstring。
 .render_with_insets <- function(d, bundles, colors, output, ranges, breaks, neutral, nofreq,
                                  axis_label, point_label, value_label, not_value_label,
                                  default_label, badge_selection, badge_layout,
@@ -2692,20 +3108,35 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
                                  max_group_members = 50, network_scale = 0.01,
                                  network_node_gap = 1,
                                  zoom_annotated_only = FALSE, repel_annotated_only = FALSE,
-                                 kld_variant = NULL, label_lang = "ja") {
+                                 kld_variant = NULL, label_lang = "ja",
+                                 main_position = NULL, inset_header_cex = 0.75,
+                                 inset_label_cex = NULL, box_label_cex = 0.8) {
   multi <- length(bundles) > 1
   single_locator_flags <- vapply(bundles, function(b) .is_single_locator(b$badge_rows), logical(1))
 
   positions <- vapply(bundles, `[[`, "", "inset_position")
-  lay <- .inset_grid_layout(positions)
+  # 显式网格的顶边距：mtext(line=0.3)的标题行高≈字号(未乘canvas_scale
+  # 的行)，再加一点余白，换算成乘canvas_scale之前的行数。
+  top_lines <- (0.2 + max(inset_header_cex, inset_label_cex)) / (canvas_size / 300)
+  lay <- .inset_grid_layout(positions, main_position, top_lines)
+  explicit <- !is.null(lay$main_cell)
+  if (explicit) {
+    old_opts <- options(kld.plot.hide_x_title = FALSE, kld.plot.hide_y_title = FALSE)
+    on.exit(options(old_opts), add = TRUE)
+  }
   canvas <- .open_canvas(output, canvas_size, width_multiplier = lay$width_multiplier,
                           height_multiplier = lay$height_multiplier)
   # 跟draw_point_vs_target()非inset路径同一个理由：正常情况由下面显式的
   # dev.off()关闭设备，splice_ok只是避免on.exit兜底再关一次已经关掉的设备
   splice_ok <- FALSE
-  on.exit(if (!splice_ok) dev.off())
+  on.exit(if (!splice_ok) dev.off(), add = TRUE)
 
   par(fig = lay$main)
+  if (explicit) {
+    par(mar = lay$main_cell$mar * canvas$canvas_scale)
+    options(kld.plot.hide_x_title = lay$main_cell$hide_x,
+            kld.plot.hide_y_title = lay$main_cell$hide_y)
+  }
   zboxes <- lapply(bundles, `[[`, "zbox")
   box_labels <- vapply(bundles, `[[`, "", "label")
   # 多个框经常互相嵌套(比如阈值由松到紧，紧的那个几乎总落在松的那个
@@ -2717,10 +3148,14 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
                                              zboxes, inset_border_col, value_label, not_value_label,
                                              colors, default_label, kld_variant = kld_variant,
                                              box_labels = box_labels, box_ltys = box_ltys,
-                                             label_lang = label_lang)
+                                             label_lang = label_lang,
+                                             box_label_cex = box_label_cex)
 
+  # all_pending/all_marks_in：每个退化成网络面板的panel各占一组(不再
+  # flatten成一份共用列表/覆盖成一份共用标记)——.splice_network_glyphs()
+  # 需要按组各自反解仿射变换，见该函数自己的docstring。
   all_pending <- list()
-  all_marks_in <- NULL
+  all_marks_in <- list()
   single_dest_ndc_x <- NULL
   single_dest_ndc_y <- NULL
   for (i in seq_along(bundles)) {
@@ -2728,9 +3163,20 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
     par(fig = lay$insets[[i]], new = TRUE)
     # 放大框上方要留出.draw_inset_header()那一行文字的空间——只在multi
     # (多config)时才需要：.open_canvas默认只留1行顶边距，legacy单inset
-    # 场景(multi==FALSE)完全不画字母/filter说明，保持margin跟改动前一样。
+    # 场景(multi==FALSE)完全不画字母/filter说明，保持margin跟改动前一样，
+    # 不然单inset的既有图会无端多出一圈留白+一行"(フィルタなし)"文字
+    # (2026-11-07实测发现的回归，不是本次要改的行为)。
     if (multi) {
-      inset_mar <- c(5.0, 5.0, 2.6, 1) * canvas$canvas_scale
+      # 显式网格(draft-short.org用)：边距/轴标题显隐按格子所在行列取
+      # (.explicit_grid_layout)，顶边距只加到够放下最大字号的标题行；
+      # 罗盘网格保持原来的c(5,5,2.6,1)，旧图不变。
+      inset_mar <- if (explicit) {
+        options(kld.plot.hide_x_title = lay$inset_cells[[i]]$hide_x,
+                kld.plot.hide_y_title = lay$inset_cells[[i]]$hide_y)
+        lay$inset_cells[[i]]$mar * canvas$canvas_scale
+      } else {
+        c(5.0, 5.0, 2.6, 1) * canvas$canvas_scale
+      }
       old_mar <- par(mar = inset_mar)
     }
     panel <- if (single_locator_flags[i]) {
@@ -2744,13 +3190,24 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
                                    repel_annotated_only = repel_annotated_only,
                                    kld_variant = kld_variant, label_lang = label_lang)
     }
+    # 显式网格最下行的网络图面板：没有坐标轴，但x轴标题/方向箭头仍画在
+    # 它下方(跟同一行散点面板同一高度)，见.explicit_grid_layout的注释
+    if (explicit && single_locator_flags[i] && !lay$inset_cells[[i]]$hide_x) {
+      kld_sub <- if (nofreq) "nofreq" else "signed"
+      title(xlab = bquote(plain(KLD)[.(kld_sub)] * "(" * .(point_label) * "→" * .(axis_label) * ")"),
+            line = par("mgp")[1] + 1.4)
+      options(kld.plot.hide_y_title = TRUE)
+      .draw_axis_direction_arrows(value_label, not_value_label)
+    }
     if (multi) {
-      .draw_inset_header(b$label, b$desc, inset_border_col)
+      .draw_inset_header(b$label, b$desc, inset_border_col, cex = inset_header_cex,
+                         label_cex = inset_label_cex)
       par(old_mar)
     }
     if (length(panel$pending) > 0) {
-      all_pending <- c(all_pending, panel$pending)
-      all_marks_in <- .draw_svg_calibration_marks(panel$in_to_data_x, panel$in_to_data_y, panel$pin)
+      all_pending[[length(all_pending) + 1]] <- panel$pending
+      all_marks_in[[length(all_marks_in) + 1]] <-
+        .draw_svg_calibration_marks(panel$in_to_data_x, panel$in_to_data_y, panel$pin)
     }
     if (!multi) {
       single_dest_ndc_x <- panel$dest_ndc_x
@@ -2840,7 +3297,9 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
         node_dispersion = filt_val("node_dispersion"), node_dispersion_op = filt_op("node_dispersion"),
         frequency = filt_val("frequency"), frequency_op = filt_op("frequency"),
         node_frequency = filt_val("node_frequency"), node_frequency_op = filt_op("node_frequency"),
-        node_keyness = filt_val("node_keyness"), node_keyness_op = filt_op("node_keyness")
+        node_keyness = filt_val("node_keyness"), node_keyness_op = filt_op("node_keyness"),
+        node_signed_keyness = filt_val("node_signed_keyness"),
+        node_signed_keyness_op = filt_op("node_signed_keyness")
       )
     )
   })
@@ -2889,6 +3348,8 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
     node_frequency_threshold_op = .arg("node_frequency_threshold_op", "gte"),
     node_keyness_threshold = .arg("node_keyness_threshold"),
     node_keyness_threshold_op = .arg("node_keyness_threshold_op", "gte"),
+    node_signed_keyness_threshold = .arg("node_signed_keyness_threshold"),
+    node_signed_keyness_threshold_op = .arg("node_signed_keyness_threshold_op", "gte"),
     aggregate_locators = tolower(.arg("aggregate_locators", "true")) == "true",
     max_group_members = as.numeric(.arg("max_group_members", "50")),
     network_scale = as.numeric(.arg("network_scale", "0.01")),
@@ -2897,7 +3358,16 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
     kld_variant = .arg("kld_variant"),
     frequency_type = .arg("frequency_type"),
     label_lang = .arg("label_lang", "ja"),
-    unselected_alpha = as.numeric(.arg("unselected_alpha", "0.05"))
+    unselected_alpha = as.numeric(.arg("unselected_alpha", "0.05")),
+    main_position = .arg("main_position"),
+    inset_header_cex = as.numeric(.arg("inset_header_cex", "0.75")),
+    inset_label_cex = { v <- .arg("inset_label_cex"); if (is.null(v)) NULL else as.numeric(v) },
+    box_label_cex = as.numeric(.arg("box_label_cex", "0.8")),
+    text_scale = as.numeric(.arg("text_scale", "1")),
+    hide_x_title = tolower(.arg("hide_x_title", "false")) == "true",
+    hide_y_title = tolower(.arg("hide_y_title", "false")) == "true",
+    hide_x_ticks = tolower(.arg("hide_x_ticks", "false")) == "true",
+    hide_y_ticks = tolower(.arg("hide_y_ticks", "false")) == "true"
   )
 }
 

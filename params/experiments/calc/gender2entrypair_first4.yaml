@@ -1,0 +1,58 @@
+# Meta-config entry for entrypair_by_gender_scope_first4.yaml -- same
+# schema as anthology2entrypair_target_shinkokin.yaml (see that file's
+# own header for the full field-by-field rationale: SCOPE/CONDITION1/
+# CONDITION2/DIRECTION replacing the OLD kld_nofreq ANTHOLOGY/
+# TARGET_CONDITION/CONDITION1/CONDITION2 shape).
+#
+# SOURCE's own LEVEL1 here is gender (性別, F/M/U), not anthology -- the
+# "前4部作品" (first four anthologies) restriction already lives
+# INSIDE that data yaml itself (its own single "filter" step, see its
+# header comment), not here: this meta-config's SCOPE is the full set
+# of LEVEL1 values that count as the population for crosstable
+# denominators, which for this source is every gender value
+# person/@gender actually has, not a set of anthology names.
+#
+# CONDITION1 (no value) ranges over every 語対 (entry×entry pair) --
+# one CrossTable per pair, same "the unpinned side batches" contract
+# cross_tables_from_pair_index itself documents. CONDITION2 pins
+# LEVEL1 to F -- "target为female" (confirmed with the user, 2026-10-07):
+# each pair's association is measured against the female slice, with
+# M/U providing the "other" half of SCOPE's own denominator.
+#
+# SCOPE includes U alongside F/M since 2026-10-12 (confirmed with the
+# user) -- U is the TEI's own literal person/@gender value for 読人不知/
+# gender-unrecorded authorship (e.g. anonymous-unknown-gender-unknown-
+# status), not a derived "everything else" category:
+# authorsex2l2entry_override.build_gender2entry_index previously only
+# looped over ("F", "M"), silently dropping every U-only <w> from both
+# rather than materializing it as its own bucket. Confirmed against
+# data/raw/hachidaishu.xml (2026-10-12) that person/@gender is always
+# exactly one of F/M/U, never missing, so this SCOPE is now the real,
+# complete set. Leaving U out previously undercounted population_
+# total/target_population by exactly that share (~29% of kokin/gosen/
+# shuui/goshuui's own lines) silently.
+
+- source: ../data/entrypair_by_gender_scope_first4.yaml
+  structure:
+    level1: 性別
+    level2: 語+語
+    value: {match, population}
+  scope: [[F, M, U]]
+  condition1: {field: level2}
+  condition2: {field: level1, value: [F]}
+  direction: []
+  # measured_value (level2) is a 語対 pair -- dispersion off the
+  # matching first4-scoped entrypair_by_line_scope_first4.yaml index
+  # (pair-keyed, not single-entry), plus the pair's own internal
+  # association (both forward readings) off entry_by_entry_scope_
+  # first4.yaml's own entry×entry crosstable index, same first4 scope.
+  # target_value is gender (level1) -- target_dispersion off gender_by_
+  # line_scope_first4.yaml, same non-degenerate full-scope correction as
+  # gender2entry_scope_first4_target_female.yaml's own aux comment
+  # (2026-10-13).
+  aux:
+    measured_dispersion: ../data/dispersion/entrypair_by_line_scope_first4.yaml
+    pair_association: ../data/entry_by_entry_scope_first4.yaml
+    target_dispersion: ../data/dispersion/gender_by_line_scope_first4.yaml
+    measured_dispersion_target: ../data/dispersion/entrypair_by_line_scope_gender_female.yaml
+    measured_dispersion_reference: ../data/dispersion/entrypair_by_line_scope_gender_not_female.yaml
