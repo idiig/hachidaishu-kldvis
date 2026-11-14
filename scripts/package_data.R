@@ -1,5 +1,3 @@
-# Serialization only: no statistical calculation or filtering.
-# Usage: Rscript scripts/package_data.R /path/to/precomputed/visualization
 source("scripts/visualization/plot_point_vs_target.R")
 args <- commandArgs(TRUE)
 src <- if (length(args)) args[[1]] else "data/processed/visualization"

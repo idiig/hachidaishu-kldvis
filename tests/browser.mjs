@@ -1,5 +1,3 @@
-// npm install --no-save playwright; npx playwright install chromium
-// Serve _site, then: node tests/browser.mjs http://localhost:8080/
 import fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 const staticServer = process.env.KLD_SERVE ? spawn('python3', ['-m', 'http.server', '8080', '--bind', '127.0.0.1', '--directory', '_site'], { stdio: 'ignore' }) : null;

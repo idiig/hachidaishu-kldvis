@@ -1,5 +1,3 @@
-# Shinylive binds the deployed webR URL in .GlobalEnv before loading the App.
-# Use that URL so project Pages subpaths also resolve without a fixed hostname.
 .fetch_browser_asset <- function(relative_path, dest) {
   if (file.exists(dest)) return(invisible(dest))
   if (!exists(".base_url", envir = .GlobalEnv, inherits = FALSE)) {

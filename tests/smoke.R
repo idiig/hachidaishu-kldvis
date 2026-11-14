@@ -11,7 +11,6 @@ for (ext in c("png", "svg")) {
   stopifnot(file.size(out) > 1000)
   unlink(out)
 }
-# The former subprocess-only network panel must render with both file devices.
 members <- data.frame(w1 = c("春", "花"), w2 = c("花", "月"),
                       assoc_w1_to_w2 = c(0.8, 0.2), assoc_w2_to_w1 = c(0.4, 0.7),
                       n_target = 3, n_not_target = 2)
@@ -23,7 +22,6 @@ for (ext in c("png", "svg")) {
   stopifnot(file.size(out) > 1000, length(result$pending) == 0)
   unlink(out)
 }
-# Exercise the real Shiny action, table output and downloadable-render state.
 shiny::testServer(server, {
   session$setInputs(input_file = "entry-vs-gender-kokin.tsv", input_mode = "cmdline",
                     cmdline_text = paste("input=data/processed/visualization/entry-vs-gender-kokin.tsv",
