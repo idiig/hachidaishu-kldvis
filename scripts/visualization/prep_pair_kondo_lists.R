@@ -1,7 +1,7 @@
 # One-shot preprocessing: derives an hl pair list from
 # ../data/reference/kondo2011list.tsv's own stem column -- sits alongside
 # prep_kondo_lists.R without changing it. Re-run (from the
-# visualization-repo root) after editing kondo2011list.tsv:
+# visualization root) after editing kondo2011list.tsv:
 #   Rscript scripts/visualization/prep_pair_kondo_lists.R
 #
 # hl definition: the same selection criterion dh-book-draft's

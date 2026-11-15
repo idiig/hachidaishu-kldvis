@@ -1,7 +1,7 @@
 # One-shot preprocessing: turns data/reference/kondo2011list.tsv into
 # the two lists plot_point_vs_target.R reads directly as files, so
 # run_meta_config_plots.R doesn't have to recompute them every run.
-# Re-run this (from the visualization-repo root) after editing
+# Re-run this (from the visualization root) after editing
 # ../data/reference/kondo2011list.tsv:
 #   Rscript scripts/visualization/prep_kondo_lists.R
 #

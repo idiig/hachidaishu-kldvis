@@ -1273,7 +1273,7 @@ filter_to_annotated_points <- function(rows, badge_rows) {
       line_w_in <- vapply(shown, strwidth, numeric(1), cex = badge_cex, family = fam, units = "inches")
       line_h_in <- vapply(shown, strheight, numeric(1), cex = badge_cex, family = fam, units = "inches")
       # 行间距用label_gap_in*1.8而不是label_gap_in本身——半个字高的行距
-      # 实测偏挤(多词名单的行与行几乎贴在一起)，跟visualization-repo独立
+      # 实测偏挤(多词名单的行与行几乎贴在一起)，跟visualization独立
       # 修过的同一个问题(commit af788bd)保持一致，两处行距公式(这里和
       # .draw_badge_box里的逐行步进)要一起改、不能只改一边。
       line_gap_in <- label_gap_in * 1.8
@@ -2939,7 +2939,7 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
 }
 
 # 向后兼容：单个位置的薄封装，供.render_with_inset()(单bundle legacy路径)
-# 以及visualization-repo里可能存在的直接调用方使用。跟原来4个switch分支
+# 以及visualization里可能存在的直接调用方使用。跟原来4个switch分支
 # 数值上逐一核对过完全一致(top: main=0,1,0,0.5/inset=0,1,0.5,1；bottom反过来；
 # left: main=0.5,1,0,1/inset=0,0.5,0,1；right反过来)。
 .inset_fig_regions <- function(inset_position) {
