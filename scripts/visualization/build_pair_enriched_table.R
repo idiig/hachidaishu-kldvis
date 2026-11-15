@@ -39,6 +39,11 @@ point_lookup <- function(table, value_col) {
 # 同一份单词表之后随机命中其中一个variant的行(2026-11-07新增，给
 # filter_by_node_keyness/draft.org:1211-1212用)
 point_lookup_by_variant <- function(table, value_col) {
+  # Category tables (e.g. visprepare's category_point_output) carry no
+  # kld_variant/keyness: every lookup is then NA rather than an error.
+  if (is.null(table$kld_variant) || is.null(table[[value_col]])) {
+    return(setNames(numeric(0), character(0)))
+  }
   key <- paste(table$point, table$frequency_type, table$kld_variant, sep = "\t")
   setNames(table[[value_col]], key)
 }
