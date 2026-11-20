@@ -673,7 +673,7 @@ ui <- fluidPage(
             conditionalPanel(
               condition = sprintf("input.inset_n >= %d", i),
               wellPanel(
-                tags$b(sprintf("inset %d (%s)", i, LETTERS[i])),
+                tags$b(sprintf("inset %d (%s)", i, letters[i])),
                 selectInput(sprintf("inset%d_inset_position", i), "inset_position",
                             choices = .INSET_POSITIONS,
                             selected = .INSET_POSITIONS[((i - 1) %% length(.INSET_POSITIONS)) + 1]),
